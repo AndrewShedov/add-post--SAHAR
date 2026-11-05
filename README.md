@@ -646,7 +646,7 @@ pub fn render_not_found(req: &HttpRequest, current_path: &str) -> Result<HttpRes
 Upon startup, the system outputs a clear status report to the terminal indicating ScyllaDB schema readiness and web server launch:
 
 <p align="center">
-    <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-5.png" width="750" />
+    <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-9.png" width="750" />
 </p>
 <p align="center"><strong>Screenshot 9: ScyllaDB readiness and server startup log</strong></p>
 
