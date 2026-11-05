@@ -20,14 +20,14 @@ Expanding upon the concept of the [basic CRUD prototype](https://github.com/Andr
 By utilizing **Askama** compile-time templates and **HTMX 4.0.0**, the application combines **Server-Side Rendering (SSR)** with **smooth SPA navigation without page reloads**, guaranteeing **excellent search engine indexing**, benchmark **SEO** performance (including Infinite Scroll indexing), and maximum resistance to vulnerabilities.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/gif-1.gif"/>
+  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/1.gif"/>
 </p>
 
 <p align="center"><strong>GIF 1: Creating a post, Infinite Scroll, and Back button navigation</strong></p>
 
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/gif-2.gif"/>
+  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/2.gif"/>
 </p>
 
 <p align="center"><strong>GIF 2: Editing and deleting a post</strong></p>

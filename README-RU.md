@@ -20,14 +20,14 @@
 Благодаря компилируемым шаблонам **Askama** и **HTMX 4.0.0**, приложение сочетает **серверный рендеринг (SSR)** с **плавной SPA-навигацией без перезагрузки страницы**, гарантируя **отличную индексацию поисковыми системами**, эталонные показатели **SEO** (включая индексацию бесконечного скролла) и максимальную устойчивость к уязвимостям.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/gif-1.gif"/>
+  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/1.gif"/>
 </p>
 
 <p align="center"><strong>GIF 1: Создание поста, бесконечный скролл и работа кнопки назад</strong></p>
 
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/gif-2.gif"/>
+  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/2.gif"/>
 </p>
 
 <p align="center"><strong>GIF 2: Редактирование и удаление поста</strong></p>
