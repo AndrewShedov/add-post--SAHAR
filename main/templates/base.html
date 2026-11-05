@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ page_title }}</title>
+    <meta name="description" content="{{ page_description }}" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="http://127.0.0.1:8080{{ current_path }}" />
+
+    <!-- OpenGraph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="{{ page_title }}" />
+    <meta property="og:description" content="{{ page_description }}" />
+
+    <meta name="htmx-config" content='{"includeIndicatorCSS": false}'>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico" />
+    <script src="/static/htmx.min.js?v=4.0.0"></script>
+    <script src="/static/app.js" defer></script>
+</head>
+<body>
+    <header class="app-header">
+        <h1>Add post (SAHAR)</h1>
+        <nav id="main-nav">
+            <a href="/"
+               hx-get="/"
+               hx-target="#main-content"
+               hx-swap="innerHTML"
+               hx-push-url="true"
+               class="nav-link {% if current_path == "/" %}active{% endif %}">Home</a>
+            <a href="/blog"
+               hx-get="/blog"
+               hx-target="#main-content"
+               hx-swap="innerHTML"
+               hx-push-url="true"
+               class="nav-link {% if current_path.starts_with("/blog") || current_path.starts_with("/posts/") %}active{% endif %}">Blog</a>
+        </nav>
+    </header>
+
+    <div id="toast-container"></div>
+
+    <main id="main-content" hx-history-elt>
+        {{ content_html|safe }}
+    </main>
+</body>
+</html>

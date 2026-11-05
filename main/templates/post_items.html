@@ -1,0 +1,32 @@
+{% for post in posts %}
+<article class="post-item">
+    <!-- Edit (pencil) and Delete (cross) actions -->
+    <div class="post-actions">
+        <a href="/posts/{{ post.id_hex }}/edit?from=blog" hx-get="/posts/{{ post.id_hex }}/edit?from=blog"
+            hx-target="#main-content" hx-swap="innerHTML" hx-push-url="true" class="action-btn edit-btn"
+            title="Edit post">&#9998;</a>
+
+        <button type="button" class="action-btn delete-btn" hx-delete="/api/posts/{{ post.created_at }}/{{ post.id }}"
+            hx-confirm="Are you sure you want to delete this post?" title="Delete post">&times;
+        </button>
+    </div>
+
+    <!-- Full-card semantic link for SEO and SPA navigation -->
+    <a href="/posts/{{ post.id_hex }}" hx-get="/posts/{{ post.id_hex }}" hx-target="#main-content" hx-swap="innerHTML"
+        hx-push-url="true" class="post-card-link">
+        {% if !post.title.is_empty() %}
+        <h2 class="post-title">{{ post.title }}</h2>
+        {% endif %}
+        <p class="post-text">{{ post.content }}</p>
+        <span class="post-date">{{ post.date_str }}</span>
+    </a>
+</article>
+{% endfor %}
+
+{% if next_timestamp.is_some() %}
+<!-- Hybrid Infinite Scroll trigger (for humans) + Crawlable SEO link (for search bots) -->
+<div class="scroll-loader" hx-get="/blog?before={{ next_timestamp.unwrap() }}" hx-trigger="revealed"
+    hx-swap="outerHTML">
+    <a href="/blog?before={{ next_timestamp.unwrap() }}">Loading more posts... ⏳</a>
+</div>
+{% endif %}

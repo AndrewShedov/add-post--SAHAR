@@ -1,0 +1,6 @@
+<div id="toast-container" hx-swap-oob="innerHTML">
+    <div class="toast {% if is_success %}success{% else %}error{% endif %}">
+        <span>{{ message }}</span>
+        <button class="toast-close">&times;</button>
+    </div>
+</div>

@@ -1,0 +1,19 @@
+<div class="card" id="home-card">
+    <h2>Create a post</h2>
+    <p class="post-counter">Total posts: {{ total_posts }}</p>
+    
+    <form id="post-form" action="/api/posts" method="POST" hx-post="/api/posts" hx-target="#home-card" hx-swap="outerHTML" autocomplete="off">
+        <div class="input-group">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" class="input-field" autocomplete="off" maxlength="150" placeholder="Max 150 chars" />
+        </div>
+
+        <div class="input-group">
+            <label for="content">* Text</label>
+            <textarea id="content" name="content" class="input-field textarea" autocomplete="off" required maxlength="3000" placeholder="Max 3000 chars"></textarea>
+        </div>
+
+        <!-- Hidden by default via the .hidden class and the hidden attribute -->
+        <button type="submit" id="submit-btn" class="btn btn-black hidden" hidden disabled>Add</button>
+    </form>
+</div>

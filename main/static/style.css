@@ -1,0 +1,387 @@
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+	outline: none;
+	font-family: Arial, sans-serif;
+}
+
+body {
+	color: #000;
+}
+
+a {
+	text-decoration: none;
+	color: inherit;
+}
+
+ul {
+	list-style: none;
+}
+
+/* Utilities */
+.hidden,
+[hidden] {
+	display: none !important;
+}
+
+/* Header & Nav */
+.app-header {
+	background: #fff;
+	border-bottom: var(--desktop_menu_part_2_wrap_border-bottom);
+	box-shadow: 0 4px 16px rgb(132 134 136 / 9%), 0 2px 10px rgb(138 140 143 / 2%);
+	padding: 20px 0;
+	text-align: center;
+	position: sticky;
+	top: 0;
+	z-index: 100;
+}
+
+.app-header h1 {
+	font-size: 24px;
+	margin-bottom: 20px;
+}
+
+nav {
+	display: flex;
+	justify-content: center;
+	gap: 20px;
+}
+
+nav a {
+	padding: 5px 10px;
+	font-size: 19px;
+	border-bottom: 2px solid transparent;
+	transition: 0.2s;
+}
+
+nav a.active,
+nav a:hover {
+	border-bottom: 2px solid #000;
+	font-weight: bold;
+}
+
+/* Main layout */
+#main-content {
+	display: flex;
+	justify-content: center;
+	padding: 35px 20px;
+}
+
+.card {
+	background: #fff;
+	width: 100%;
+	max-width: 550px;
+	text-align: center;
+}
+
+.card h2 {
+	font-size: 22px;
+	margin-bottom: 20px;
+}
+
+.post-counter {
+	color: #666;
+	font-size: 16px;
+	margin-bottom: 20px;
+}
+
+/* Form Elements */
+.input-group {
+	margin-bottom: 23px;
+	text-align: left;
+}
+
+.input-group label {
+	display: block;
+	font-weight: bold;
+	margin-bottom: 5px;
+	font-size: 17px;
+}
+
+.input-field {
+	width: 100%;
+	padding: 10px;
+	border: 1px solid #ccc;
+	border-radius: 6px;
+	font-size: 19px;
+}
+
+.textarea {
+	resize: none;
+	height: 200px;
+}
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: #fff;
+	background: #000;
+	padding: 10px 20px;
+	border: 1px solid #000;
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 16px;
+	width: 100%;
+	transition: all 0.2s;
+}
+
+.btn:hover {
+	opacity: 0.9;
+}
+
+.btn:active {
+	opacity: 0.8;
+}
+
+.btn-outline {
+	background: #fff;
+	color: #000;
+	border: 1px solid #ccc;
+}
+
+.btn-outline:hover {
+	border-color: #000;
+	background: #f9f9f9;
+}
+
+/* A set of buttons in the post-editing view: Back, Cancel, Publish */
+.edit-buttons-row {
+	display: flex;
+	gap: 10px;
+	margin-top: 5px;
+}
+
+.edit-buttons-row .btn {
+	flex: 1;
+}
+
+/* Blog Feed */
+.blog-container {
+	width: 100%;
+	max-width: 600px;
+	margin-top: 20px;
+}
+
+.post-list {
+	display: flex;
+	flex-direction: column;
+	gap: 25px;
+}
+
+.post-item {
+	background: #fff;
+	padding: 0;
+	border-radius: 8px;
+	border: 1px solid rgb(225 223 223 / 34%);
+	box-shadow: 0 4px 16px rgb(132 134 136 / 9%), 0 2px 2px rgb(138 140 143 / 10%);
+	text-align: left;
+	position: relative;
+	transition: all 0.2s ease;
+	overflow: hidden;
+}
+
+.post-item:hover {
+	transition: box-shadow 200ms ease;
+	box-shadow: 4px 6px 9px rgb(151 153 155 / 13%), 0 4px 6px rgb(155 157 162 / 7%);
+}
+
+.post-card-link {
+	display: block;
+	width: 100%;
+	height: 100%;
+	padding: 15px;
+	color: inherit;
+}
+
+.post-title {
+	text-align: center;
+	font-size: 20px;
+	line-height: 31px;
+	font-weight: 700;
+	margin: 22px 0 12px 0;
+	color: #000;
+}
+
+.post-text {
+	font-size: 19px;
+	color: #333;
+	margin-bottom: 15px;
+	word-wrap: break-word;
+	white-space: pre-wrap;
+	line-height: 1.4;
+}
+
+.post-date {
+	text-align: center;
+	font-size: 17px;
+	color: #929ba3;
+	display: block;
+}
+
+/* Action block: pencil (edit) + cross (delete) */
+.post-actions {
+	position: absolute;
+	top: 4px;
+	right: 12px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.post-detail-actions {
+	position: static;
+}
+
+.action-btn {
+	background: none;
+	border: none;
+	color: #aaa;
+	cursor: pointer;
+	padding: 2px 6px;
+	border-radius: 4px;
+	transition: color 0.2s, background-color 0.2s;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+/* Pencil */
+.edit-btn {
+	position: relative;
+	top: 2.1px;
+	font-size: 21px;
+}
+
+.edit-btn:hover {
+	color: #000;
+	background: #f0f0f0;
+}
+
+/* Delete icon (cross) */
+.delete-btn {
+	font-size: 27px;
+}
+
+.delete-btn:hover {
+	color: #d32f2f;
+	background: #ffebee;
+}
+
+/* Full post page (/posts/{id}) */
+.post-detail-card {
+	background: #fff;
+	padding: 15px;
+	border-radius: 12px;
+	border: 1px solid #e0e0e0;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+	width: 100%;
+	max-width: 830px;
+}
+
+.post-detail-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 20px;
+}
+
+.back-link {
+	font-size: 16px;
+	color: #666;
+	transition: color 0.2s;
+}
+
+.back-link:hover {
+	color: #000;
+}
+
+.post-detail-title {
+	font-size: 22px;
+	font-weight: bold;
+	color: #000;
+	text-align: center;
+	margin-bottom: 12px;
+	line-height: 31px;
+	word-wrap: break-word;
+}
+
+.post-detail-date {
+	display: block;
+	text-align: center;
+	font-size: 14px;
+	color: #8e8e93;
+	margin: 17px 0;
+}
+
+.post-detail-content {
+	font-size: 19px;
+	color: #1c1c1e;
+	line-height: 31px;
+	text-align: left;
+	white-space: pre-line;
+	word-wrap: break-word;
+}
+
+/* HTMX Loaders */
+.scroll-loader {
+	text-align: center;
+	color: #555;
+	padding: 0 0 15px;
+	font-size: 14px;
+}
+
+/* Toast Notifications */
+#toast-container {
+	position: fixed;
+	bottom: 20px;
+	right: 20px;
+	z-index: 1000;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.toast {
+	background: #333;
+	color: #fff;
+	padding: 15px 20px;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-width: 250px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+	animation: slideIn 0.3s ease-out;
+}
+
+.toast.success {
+	background: #2e7d32;
+}
+
+.toast.error {
+	background: #d32f2f;
+}
+
+.toast-close {
+	background: none;
+	border: none;
+	color: #fff;
+	font-size: 20px;
+	cursor: pointer;
+	margin-left: 15px;
+}
+
+@keyframes slideIn {
+	from {
+		transform: translateX(100%);
+		opacity: 0;
+	}
+
+	to {
+		transform: translateX(0);
+		opacity: 1;
+	}
+}

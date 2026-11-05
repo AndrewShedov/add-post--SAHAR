@@ -1,0 +1,46 @@
+{% match post %}
+{%- when Some with (post) -%}
+<article class="post-detail-card">
+    <div class="post-detail-header">
+        <a href="/blog"
+           hx-get="/blog"
+           hx-target="#main-content"
+           hx-swap="innerHTML"
+           hx-push-url="true"
+           class="back-link">&larr; Back to Blog</a>
+
+        <div class="post-actions post-detail-actions">
+            <a href="/posts/{{ post.id_hex }}/edit?from=post"
+               hx-get="/posts/{{ post.id_hex }}/edit?from=post"
+               hx-target="#main-content"
+               hx-swap="innerHTML"
+               hx-push-url="true"
+               class="action-btn edit-btn"
+               title="Edit post">&#9998;</a>
+
+            <button type="button"
+                    class="action-btn delete-btn"
+                    hx-delete="/api/posts/{{ post.created_at }}/{{ post.id }}?redirect=blog"
+                    hx-confirm="Are you sure you want to delete this post?"
+                    hx-target="#main-content"
+                    hx-swap="innerHTML"
+                    title="Delete post">&times;</button>
+        </div>
+    </div>
+
+    {% if !post.title.is_empty() %}<h1 class="post-detail-title">{{ post.title }}</h1>{% endif %}
+    <span class="post-detail-date">{{ post.date_str }}</span>
+    <p class="post-detail-content">{{ post.content }}</p>
+</article>
+{%- when None -%}
+<div class="card">
+    <h2>404 — Post not found</h2>
+    <p class="post-counter">This post does not exist or has been deleted.</p>
+    <a href="/blog"
+       hx-get="/blog"
+       hx-target="#main-content"
+       hx-swap="innerHTML"
+       hx-push-url="true"
+       class="btn">Back to Blog</a>
+</div>
+{%- endmatch -%}
