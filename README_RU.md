@@ -5,7 +5,7 @@
 [![En](https://img.shields.io/badge/En-black?style=flat&logoColor=whit)](https://github.com/AndrewShedov/add-post--SAHAR)<br>
 
 > **Исследовательская статья:** <br>
-> [💎 Дневник разработчика CRYSTAL #3: Сравнительное исследование производительности и кибербезопасности клиент-серверного взаимодействия в технологических стеках LARS и SAHAR](https://shedov.top/ru/crystal-dev-diary-3-comparative-study-lars-and-sahar/)
+> [💎 Дневник разработчика CRYSTAL #3: Сравнительное исследование производительности и кибербезопасности клиент-серверного взаимодействия в технологических стеках LARS и SAHAR](https://shedov.top/ru/dnevnik-razrabotchika-crystal-3-sravnitelnoe-issledovanie-lars-i-sahar/)
 
 Данное приложение представляет собой многостраничный прототип, разработанный в рамках поиска нового высокопроизводительного и кибербезопасного технологического стека для социальной сети [CRYSTAL v3.0](https://github.com/CrystalSystems).<br>
 Развивая концепцию [базового CRUD-прототипа](https://github.com/AndrewShedov/enter-text--SAHAR), это приложение демонстрирует полноценный цикл работы с публикациями в базе данных **ScyllaDB**:<br>
