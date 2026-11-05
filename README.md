@@ -78,7 +78,7 @@ OS: Debian 12.
 The backend is divided into logically isolated modules inside the `src/` directory:
 * `src/main.rs` — Entry point, HTTP server initialization, Security Headers configuration, incoming payload limits, and routing.
 * `src/models.rs` — Domain data structures (`Post`, `PostForm`, query parameters) and compile-time Askama template structures `#[derive(Template)]`.
-* `src/db.rs` — ScyllaDB connection, automatic schema initialization, startup counter synchronization, and pre-compiled `PreparedStatement` queries (`AppState`).
+* `src/db.rs` — ScyllaDB connection, automatic schema initialization, startup counter synchronization, and pre-compiled `PreparedStatement` queries inside the `AppState` struct..
 * `src/handlers.rs` — Asynchronous Actix Web route handlers for rendering pages and executing CRUD operations.
 * `src/security.rs` — `Origin`/`Referer` header validation for CSRF protection, HTMX 4 request type detection, and SSR/partial rendering functions.
 
