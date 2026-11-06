@@ -122,14 +122,14 @@ OS: Debian 12.
 Каждая страница (`/`, `/blog`, `/posts/{id}`, `/posts/{id}/edit`) на стороне сервера формирует уникальные теги `<title>`, `<meta name="description">`, `<meta property="og:title">` и `<meta property="og:description">`. В файле **`src/handlers.rs`** (в функциях `index`, `blog`, `view_post`, `edit_post_page`) генерируются индивидуальный заголовок и описание для текущего маршрута (или текста открытого поста), функция `render_page()` в **`src/security.rs`** передаёт их в структуру `BaseTemplate`, а шаблон **`templates/base.html`** рендерит их внутри секции `<head>`.
 
 ~~~html
-<title>Sample text | 18 — Add post (SAHAR)</title>
+<title>Sample text | 18 — Add Post (SAHAR)</title>
     <meta name="description" content="Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry&#39;s standard dummy text ever since 1966, wh..." />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="http://127.0.0.1:8080/posts/3fa4febf65d442cbad3d776399f0507f" />
 
     <!-- OpenGraph -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Sample text | 18 — Add post (SAHAR)" />
+    <meta property="og:title" content="Sample text | 18 — Add Post (SAHAR)" />
     <meta property="og:description" content="Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry&#39;s standard dummy text ever since 1966, wh..." />
 ~~~
 
@@ -638,7 +638,7 @@ pub fn render_not_found(req: &HttpRequest, current_path: &str) -> Result<HttpRes
     let partial = PostDetailTemplate { post: None }
         .render()
         .map_err(error::ErrorInternalServerError)?;
-    let page_title = "Post not found — Add post (SAHAR)";
+    let page_title = "Post not found — Add Post (SAHAR)";
 
     if is_htmx_partial_request(req) {
         Ok(HttpResponse::NotFound()
