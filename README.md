@@ -428,7 +428,7 @@ content: truncate(&content, 700), // Maximum 700 characters for the text in the 
 
   If the title or text exceeds the specified values, it is cleanly truncated in the feed preview with an ellipsis (`...`), while navigating to the full post page (`/posts/{id}`) or edit page (`/posts/{id}/edit`) displays the content in full.
   * **Maximum Full Post Size:** Configured synchronously across three layers — in the **`templates/home.html`** and **`templates/post_edit.html`** HTML templates (`maxlength="150"` and `maxlength="3000"`), on the server in **`src/handlers.rs`** within the `create_post` and `update_post` functions (`.chars().take(150)` and `.chars().take(3000)`), and via the form payload limit in **`src/main.rs`** (`web::FormConfig::default().limit(65536)`).
-* **Edit Post (`/posts/{id}/edit`) & Zero-State Reactive Reset (`Zero-State Cancel`):**
+* **Edit Post (`/posts/{id}/edit`) & Zero-State Reactive Reset:**
   Accessible by clicking the pencil icon (`✎`) on both the preview card in the feed (`/blog`) and inside the full post (`/posts/{id}`). Unlike traditional React SPAs—which require combining `useState` hooks and `TanStack Query` cache state with Virtual DOM re-renders on every keystroke to track dirty form state and roll back changes—this prototype utilizes a native **DOM Dataset pattern** (`templates/post_edit.html` + `static/app.js`):
   * During server-side rendering of **`templates/post_edit.html`**, Askama stamps the reference database values from ScyllaDB directly into native HTML5 `data-original` attributes on the form inputs:
 
