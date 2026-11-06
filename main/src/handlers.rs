@@ -77,7 +77,7 @@ pub async fn index(req: HttpRequest, state: web::Data<AppState>) -> Result<HttpR
         &req,
         partial,
         "/",
-        "Add post (SAHAR)",
+        "Add Post (SAHAR)",
         "Create a new post in the SAHAR stack prototype.",
     )
 }
@@ -117,7 +117,7 @@ pub async fn blog(
         &req,
         partial,
         &current_path,
-        "Blog — Add post (SAHAR)",
+        "Blog — Add Post (SAHAR)",
         "Read the latest posts in the SAHAR stack prototype.",
     )
 }
@@ -140,9 +140,9 @@ pub async fn view_post(
 
     let canonical_path = format!("/posts/{}", post.id_hex);
     let seo_title = if post.title.is_empty() {
-        format!("{} — Add post (SAHAR)", truncate(&post.content, 40))
+        format!("{} — Add Post (SAHAR)", truncate(&post.content, 40))
     } else {
-        format!("{} — Add post (SAHAR)", post.title)
+        format!("{} — Add Post (SAHAR)", post.title)
     };
     let seo_desc = truncate(&post.content, 150);
 
@@ -187,7 +187,7 @@ pub async fn edit_post_page(
         &req,
         partial,
         &canonical_path,
-        "Edit post — Add post (SAHAR)",
+        "Edit post — Add Post (SAHAR)",
         "Edit post in the SAHAR stack prototype.",
     )
 }
@@ -306,9 +306,9 @@ pub async fn update_post(
 
     let post_url = format!("/posts/{}", updated_post.id_hex);
     let seo_title = if updated_post.title.is_empty() {
-        format!("{} — Add post (SAHAR)", truncate(&updated_post.content, 40))
+        format!("{} — Add Post (SAHAR)", truncate(&updated_post.content, 40))
     } else {
-        format!("{} — Add post (SAHAR)", updated_post.title)
+        format!("{} — Add Post (SAHAR)", updated_post.title)
     };
     let safe_title = html_escape_title(&seo_title);
 
@@ -388,7 +388,7 @@ pub async fn delete_post(
                 .insert_header(("HX-Push-Url", "/blog"))
                 .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
                 .body(format!(
-                    "<title>Blog — Add post (SAHAR)</title>\n{blog_html}\n{toast_html}"
+                    "<title>Blog — Add Post (SAHAR)</title>\n{blog_html}\n{toast_html}"
                 )));
         }
 

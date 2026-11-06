@@ -100,7 +100,7 @@ pub fn render_not_found(req: &HttpRequest, current_path: &str) -> Result<HttpRes
     let partial = PostDetailTemplate { post: None }
         .render()
         .map_err(error::ErrorInternalServerError)?;
-    let page_title = "Post not found — Add post (SAHAR)";
+    let page_title = "Post not found — Add Post (SAHAR)";
 
     if is_htmx_partial_request(req) {
         Ok(HttpResponse::NotFound()
