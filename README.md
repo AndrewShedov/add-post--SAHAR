@@ -1,6 +1,6 @@
 [![GitHub Release](https://img.shields.io/github/v/release/AndrewShedov/add-post--SAHAR?style=for-the-badge&logo=github&logoColor=white&labelColor=black&color=%23f3f3f3)](https://github.com/AndrewShedov/add-post--SAHAR/releases)&nbsp;[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge&logo=5865F2&logoColor=black&labelColor=black&color=%23f3f3f3)](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/LICENSE)&nbsp;[![Members](https://img.shields.io/badge/dynamic/json?style=for-the-badge&label=&logo=discord&logoColor=white&labelColor=black&color=%23f3f3f3&query=$.approximate_member_count&url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FENB7RbxVZE%3Fwith_counts%3Dtrue)](https://discord.gg/ENB7RbxVZE)
 
-# 🍬 Add Post (SAHAR)
+# Add Post (SAHAR)
 
 [![Ru](https://img.shields.io/badge/Ru-black?style=flat&logoColor=whit)](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/README_RU.md)<br>
 
