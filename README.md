@@ -428,9 +428,31 @@ content: truncate(&content, 700), // Maximum 700 characters for the text in the 
 
   If the title or text exceeds the specified values, it is cleanly truncated in the feed preview with an ellipsis (`...`), while navigating to the full post page (`/posts/{id}`) or edit page (`/posts/{id}/edit`) displays the content in full.
   * **Maximum Full Post Size:** Configured synchronously across three layers — in the **`templates/home.html`** and **`templates/post_edit.html`** HTML templates (`maxlength="150"` and `maxlength="3000"`), on the server in **`src/handlers.rs`** within the `create_post` and `update_post` functions (`.chars().take(150)` and `.chars().take(3000)`), and via the form payload limit in **`src/main.rs`** (`web::FormConfig::default().limit(65536)`).
-* **Edit Post (`/posts/{id}/edit`):** Accessible by clicking the pencil icon (`✎`) on both the preview card in the feed (`/blog`) and inside the full post (`/posts/{id}`). Equipped with a smart **`Back, Cancel, Publish`** button row:
-  * **`Back`** returns the user to the exact page from which they entered the edit view (back to the `/blog` feed or to the full post `/posts/{id}`).
-  * **`Cancel`** and **`Publish`** appear dynamically only when the post title or text has been modified relative to the original values (tracked via native `data-original` attributes without external state managers). Clicking `Cancel` instantaneously restores the original post text and hides the buttons.
+* **Edit Post (`/posts/{id}/edit`) & Zero-State Reactive Reset (`Zero-State Cancel`):**
+  Accessible by clicking the pencil icon (`✎`) on both the preview card in the feed (`/blog`) and inside the full post (`/posts/{id}`). Unlike traditional React SPAs—which require combining `useState` hooks and `TanStack Query` cache state with Virtual DOM re-renders on every keystroke to track dirty form state and roll back changes—this prototype utilizes a native **DOM Dataset pattern** (`templates/post_edit.html` + `static/app.js`):
+  * During server-side rendering of **`templates/post_edit.html`**, Askama stamps the reference database values from ScyllaDB directly into native HTML5 `data-original` attributes on the form inputs:
+
+~~~html
+<input type="text" id="edit-title" name="title" value="{{ post.title }}" data-original="{{ post.title }}" ... />
+<textarea id="edit-content" name="content" data-original="{{ post.content }}" ...>{{ post.content }}</textarea>
+~~~
+
+  * The interface features a context-aware **`Back, Cancel, Publish`** button bar:
+    * **`Back`** is always visible and returns the user to the exact page from which they entered the edit view (back to the `/blog` feed or to the full post `/posts/{id}`).
+    * **`Cancel`** and **`Publish`** are hidden by default and appear dynamically only when the current `.value` differs from the reference string in `.dataset.original` (evaluated in `static/app.js` with zero DOM re-renders).
+    * Clicking **`Cancel`** invokes `resetEditFormToOriginal()`, which instantaneously restores the original title and post text directly from `dataset.original` without making an extra network request to the server or database, and automatically hides the `Cancel` and `Publish` buttons:
+
+~~~javascript
+function resetEditFormToOriginal() {
+    const editTitle = document.getElementById('edit-title');
+    const editContent = document.getElementById('edit-content');
+    if (!editTitle || !editContent) return;
+
+    editTitle.value = editTitle.dataset.original || '';
+    editContent.value = editContent.dataset.original || '';
+    updateEditButtons();
+}
+~~~
 * **Delete Post (`×`):** Deletes the post simultaneously from both tables (`posts` and `posts_by_id`), decrements the counter in `post_counts` (with protection against going into negative values in `src/handlers.rs`), and either removes the card from the list (in `/blog`) or redirects the user back to `/blog` with a deletion toast notification (if triggered from the full post page `/posts/{id}`).
 
 <p align="center">
