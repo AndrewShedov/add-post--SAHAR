@@ -282,12 +282,12 @@ OS: Debian 12.
 <p align="center">
   <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-4.png"/>
 </p>
-<p align="center"><strong>Скрин 4: Переход на 9-й пост (глубокая прокрутка). Алгоритм сохраняет координату (Y: 3876) и фиксирует размер DOM-снимка подгруженной ленты (20323 символа), предотвращая потерю загруженных данных.</strong></p>
+<p align="center"><strong>Скрин 4: Переход на 9-й пост (глубокая прокрутка). Алгоритм сохраняет координату (Y: 3738) и фиксирует размер DOM-снимка подгруженной ленты (28352 символа), предотвращая потерю загруженных данных.</strong></p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-5.png"/>
 </p>
-<p align="center"><strong>Скрин 5: Инспекция переменной <code>savedBlogFeedHtml</code>. В консоли видно семантическое содержимое кэша и его фактический вес в памяти браузера (20.4 kB).</strong></p>
+<p align="center"><strong>Скрин 5: Инспекция переменной <code>savedBlogFeedHtml</code>. В консоли видно семантическое содержимое кэша и его фактический вес в памяти браузера (28.4 kB).</strong></p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-6.png"/>

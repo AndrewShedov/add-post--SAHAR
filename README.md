@@ -282,12 +282,12 @@ Below are the results of testing navigation in a blog feed consisting of 17 post
 <p align="center">
   <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-4.png"/>
 </p>
-<p align="center"><strong>Screenshot 4: Navigating to the 9th post (deep scroll). The algorithm saves the coordinate (Y: 3876) and records the DOM snapshot size of the loaded feed (20,323 characters), preventing loss of loaded data.</strong></p>
+<p align="center"><strong>Screenshot 4: Navigating to the 9th post (deep scroll). The algorithm saves the coordinate (Y: 3738) and records the DOM snapshot size of the loaded feed (28,352 characters), preventing loss of loaded data.</strong></p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-5.png"/>
 </p>
-<p align="center"><strong>Screenshot 5: Inspecting the <code>savedBlogFeedHtml</code> variable. The console shows the semantic contents of the cache and its actual footprint in memory (20.4 kB).</strong></p>
+<p align="center"><strong>Screenshot 5: Inspecting the <code>savedBlogFeedHtml</code> variable. The console shows the semantic contents of the cache and its actual footprint in memory (28.4 kB).</strong></p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-6.png"/>
