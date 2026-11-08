@@ -4,6 +4,8 @@
 
 [![En](https://img.shields.io/badge/En-black?style=flat&logoColor=whit)](https://github.com/AndrewShedov/add-post--SAHAR)<br>
 
+### ***Разработано с Gemini 4 Argon ✨***
+
 > **Исследовательская статья:** <br>
 > [💎 Дневник разработчика CRYSTAL #3: Сравнительное исследование производительности и кибербезопасности клиент-серверного взаимодействия в технологических стеках LARS и SAHAR](https://shedov.top/ru/dnevnik-razrabotchika-crystal-3-sravnitelnoe-issledovanie-lars-i-sahar/)
 
