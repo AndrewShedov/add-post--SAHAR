@@ -11,7 +11,7 @@
 
 This application is a multi-page prototype developed as part of the search for a new high-performance and cybersecure technology stack for the [CRYSTAL v3.0](https://github.com/CrystalSystems) social network.<br>
 Expanding upon the concept of the [basic CRUD prototype](https://github.com/AndrewShedov/enter-text--SAHAR), this application demonstrates a complete publication lifecycle with the **ScyllaDB** database:<br>
- 1. Creating posts with a dynamic publication counter.
+ 1. Creating posts.
  2. Live distributed post counter.
  3. Browsing the post feed with Infinite Scroll powered by cursor-based pagination.
  4. Dedicated full post page (`/posts/{id}`).
