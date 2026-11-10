@@ -37,7 +37,7 @@
 <br>
 
 <p align="center">
-<a href="https://www.youtube.com/watch?v=OziqgN3_A6k" target="_blank">
+<a href="https://vk.ru/shedovtop?z=video-161152224_456239088%2F-161152224_4%2Fpl_-161152224_4" target="_blank">
   <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-12.png" style="width: 100%; max-width: 100%;" alt="CRYSTAL v1.0 features"/>
 </a>
 </p>
