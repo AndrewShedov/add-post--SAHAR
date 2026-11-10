@@ -42,6 +42,8 @@ By utilizing **Askama** compile-time templates and **HTMX 4.0.0**, the applicati
 </a>
 </p>
 
+<p align="center"><strong>Full demonstration of the prototype's features</strong></p>
+
 <br>
 
 **Contents:**<br>
