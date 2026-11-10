@@ -34,7 +34,15 @@ By utilizing **Askama** compile-time templates and **HTMX 4.0.0**, the applicati
 
 <p align="center"><strong>GIF 2: Editing and deleting a post</strong></p>
 
+<br>
 
+<p align="center">
+<a href="https://www.youtube.com/watch?v=OziqgN3_A6k" target="_blank">
+  <img src="https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/assets/screenshot-11.png" style="width: 100%; max-width: 100%;" alt="CRYSTAL v1.0 features"/>
+</a>
+</p>
+
+<br>
 
 **Contents:**<br>
 1. [Project structure and local PC specifications](#paragraph_1)
