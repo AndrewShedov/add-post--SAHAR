@@ -6,9 +6,11 @@
     <form id="edit-form"
           action="/api/posts/{{ post.id_hex }}/edit"
           method="POST"
-          hx-post="/api/posts/{{ post.id_hex }}/edit"
-          hx-target="#main-content"
-          hx-swap="innerHTML"
+          data-hx-post="/api/posts/{{ post.id_hex }}/edit"
+          data-hx-target="#main-content"
+          data-hx-swap="innerHTML"
+          data-hx-sync="this:drop"
+          data-hx-disable="find button[type='submit']"
           autocomplete="off">
         <div class="input-group">
             <label for="edit-title">Title</label>
@@ -20,7 +22,7 @@
                    maxlength="150"
                    placeholder="Max 150 chars"
                    value="{{ post.title }}"
-                   data-original="{{ post.title }}" />
+                   data-original="{{ post.title }}">
         </div>
 
         <div class="input-group">
@@ -37,10 +39,10 @@
 
         <div class="edit-buttons-row">
             <a href="{{ back_url }}"
-               hx-get="{{ back_url }}"
-               hx-target="#main-content"
-               hx-swap="innerHTML"
-               hx-push-url="true"
+               data-hx-get="{{ back_url }}"
+               data-hx-target="#main-content"
+               data-hx-swap="innerHTML"
+               data-hx-push-url="true"
                class="btn btn-outline">Back</a>
 
             <button type="button"
@@ -61,10 +63,10 @@
     <h2>404 — Post not found</h2>
     <p class="post-counter">This post does not exist or has been deleted.</p>
     <a href="/blog"
-       hx-get="/blog"
-       hx-target="#main-content"
-       hx-swap="innerHTML"
-       hx-push-url="true"
+       data-hx-get="/blog"
+       data-hx-target="#main-content"
+       data-hx-swap="innerHTML"
+       data-hx-push-url="true"
        class="btn">Back to Feed</a>
 </div>
 {% endmatch %}

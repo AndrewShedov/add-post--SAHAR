@@ -1,9 +1,7 @@
 use askama::Template;
 use serde::Deserialize;
-use uuid::Uuid;
 
 pub struct Post {
-    pub id: Uuid,
     pub id_hex: String,
     pub title: String,
     pub content: String,
@@ -39,6 +37,8 @@ pub struct BaseTemplate {
     pub page_description: String,
     pub content_html: String,
     pub current_path: String,
+    pub canonical_base_url: String,
+    pub noindex: bool,
 }
 
 #[derive(Template)]

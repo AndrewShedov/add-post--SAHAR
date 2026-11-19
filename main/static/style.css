@@ -28,7 +28,6 @@ ul {
 /* Header & Nav */
 .app-header {
 	background: #fff;
-	border-bottom: var(--desktop_menu_part_2_wrap_border-bottom);
 	box-shadow: 0 4px 16px rgb(132 134 136 / 9%), 0 2px 10px rgb(138 140 143 / 2%);
 	padding: 20px 0;
 	text-align: center;

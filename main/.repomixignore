@@ -1,0 +1,10 @@
+.env*
+*.pem
+*.key
+README*
+repomix-output*
+htmx*
+secrets/
+target/
+node_modules/
+Cargo.lock

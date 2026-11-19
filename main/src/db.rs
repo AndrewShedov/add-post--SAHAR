@@ -3,15 +3,27 @@ use actix_web::web;
 use chrono::{DateTime, Utc};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::response::query_result::QueryResult;
+use scylla::response::PagingState;
+use scylla::statement::batch::{Batch, BatchType};
 use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::unprepared::Statement;
 use scylla::value::{Counter, CqlTimestamp};
+use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
+
+pub enum PostLookup {
+    Found(i32, Post),
+    NotFound,
+    Unavailable,
+}
 
 pub struct AppState {
     pub session: Arc<Session>,
-    pub stmt_insert_post: PreparedStatement,
-    pub stmt_insert_post_by_id: PreparedStatement,
+    pub batch_insert_post: Batch,
+    pub stmt_restore_post_by_id: PreparedStatement,
     pub stmt_update_post: PreparedStatement,
     pub stmt_update_post_by_id: PreparedStatement,
     pub stmt_inc_counter: PreparedStatement,
@@ -26,8 +38,11 @@ pub struct AppState {
 
 pub async fn init_db() -> AppState {
     // 1. Establish connection to the local ScyllaDB node
+    let scylla_uri =
+        std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new()
-        .known_node("127.0.0.1:9042")
+        .known_node(scylla_uri)
+        .connection_timeout(Duration::from_secs(5))
         .build()
         .await
         .expect("Failed to connect to ScyllaDB");
@@ -59,12 +74,25 @@ pub async fn init_db() -> AppState {
         .prepare("INSERT INTO posts_by_id (id, bucket, created_at, title, content) VALUES (?, ?, ?, ?, ?)")
         .await
         .unwrap();
+
+    // Pre-build Logged Batch so ScyllaDB coordinator atomically commits both tables via batchlog
+    let mut batch_insert_post = Batch::new(BatchType::Logged);
+    batch_insert_post.append_statement(stmt_insert_post);
+    batch_insert_post.append_statement(stmt_insert_post_by_id);
+
+    // LWT (IF NOT EXISTS) rollback query so Paxos timestamps override the preceding LWT delete
+    let stmt_restore_post_by_id = session
+        .prepare("INSERT INTO posts_by_id (id, bucket, created_at, title, content) VALUES (?, ?, ?, ?, ?) IF NOT EXISTS")
+        .await
+        .unwrap();
+
+    // Enforce LWT (IF EXISTS) consistently across BOTH tables for updates and deletes
     let stmt_update_post = session
-        .prepare("UPDATE posts SET title = ?, content = ? WHERE bucket = ? AND created_at = ? AND id = ?")
+        .prepare("UPDATE posts SET title = ?, content = ? WHERE bucket = ? AND created_at = ? AND id = ? IF EXISTS")
         .await
         .unwrap();
     let stmt_update_post_by_id = session
-        .prepare("UPDATE posts_by_id SET title = ?, content = ? WHERE id = ?")
+        .prepare("UPDATE posts_by_id SET title = ?, content = ? WHERE id = ? IF EXISTS")
         .await
         .unwrap();
     let stmt_inc_counter = session
@@ -92,11 +120,11 @@ pub async fn init_db() -> AppState {
         .await
         .unwrap();
     let stmt_delete_post = session
-        .prepare("DELETE FROM posts WHERE bucket = ? AND created_at = ? AND id = ?")
+        .prepare("DELETE FROM posts WHERE bucket = ? AND created_at = ? AND id = ? IF EXISTS")
         .await
         .unwrap();
     let stmt_delete_post_by_id = session
-        .prepare("DELETE FROM posts_by_id WHERE id = ?")
+        .prepare("DELETE FROM posts_by_id WHERE id = ? IF EXISTS")
         .await
         .unwrap();
 
@@ -104,8 +132,8 @@ pub async fn init_db() -> AppState {
 
     AppState {
         session: Arc::new(session),
-        stmt_insert_post,
-        stmt_insert_post_by_id,
+        batch_insert_post,
+        stmt_restore_post_by_id,
         stmt_update_post,
         stmt_update_post_by_id,
         stmt_inc_counter,
@@ -175,25 +203,46 @@ async fn initialize_schema(session: &Session) {
 async fn sync_on_startup(session: &Session) {
     let mut actual_count: i64 = 0;
 
-    if let Ok(res) = session
-        .query_unpaged(
-            "SELECT bucket, created_at, id, title, content FROM posts WHERE bucket = 1",
-            &[],
-        )
+    let sync_insert_stmt = session
+        .prepare("INSERT INTO posts_by_id (id, bucket, created_at, title, content) VALUES (?, ?, ?, ?, ?)")
         .await
-    {
-        if let Ok(rows) = res.into_rows_result() {
-            if let Ok(iter) = rows.rows::<(i32, CqlTimestamp, Uuid, String, String)>() {
-                for row in iter.flatten() {
-                    actual_count += 1;
-                    let (bucket, created_at, id, title, content) = row;
+        .ok();
+
+    let paged_query = Statement::new(
+        "SELECT bucket, created_at, id, title, content FROM posts WHERE bucket = 1",
+    )
+    .with_page_size(500);
+    let mut paging_state = PagingState::start();
+
+    loop {
+        let (res, paging_state_response) = match session
+            .query_single_page(paged_query.clone(), &[], paging_state)
+            .await
+        {
+            Ok(pair) => pair,
+            Err(err) => {
+                eprintln!("❌ [ScyllaDB sync_on_startup]: {err}");
+                break;
+            }
+        };
+
+        if let Ok(rows) = res.into_rows_result()
+            && let Ok(iter) = rows.rows::<(i32, CqlTimestamp, Uuid, String, String)>()
+        {
+            for (bucket, created_at, id, title, content) in iter.flatten() {
+                actual_count += 1;
+                if let Some(ref stmt) = sync_insert_stmt {
                     let _ = session
-                        .query_unpaged(
-                            "INSERT INTO posts_by_id (id, bucket, created_at, title, content) VALUES (?, ?, ?, ?, ?)",
-                            (id, bucket, created_at, title, content),
-                        )
+                        .execute_unpaged(stmt, (id, bucket, created_at, title, content))
                         .await;
                 }
+            }
+        }
+
+        match paging_state_response.into_paging_control_flow() {
+            ControlFlow::Break(()) => break,
+            ControlFlow::Continue(next_paging_state) => {
+                paging_state = next_paging_state;
             }
         }
     }
@@ -209,7 +258,10 @@ async fn sync_on_startup(session: &Session) {
             .and_then(|r| r.0)
             .map(|c| c.0)
             .unwrap_or(0),
-        Err(_) => 0,
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB sync_on_startup counter]: {err}");
+            0
+        }
     };
 
     let diff = actual_count - current_counter;
@@ -223,46 +275,66 @@ async fn sync_on_startup(session: &Session) {
     }
 }
 
-pub async fn get_total_posts(state: &web::Data<AppState>) -> i64 {
-    if let Ok(res) = state
+pub fn is_lwt_applied(res: QueryResult) -> bool {
+    res.into_rows_result()
+        .ok()
+        .and_then(|rows| rows.maybe_first_row::<scylla::value::Row>().ok().flatten())
+        .and_then(|row| {
+            row.columns
+                .first()
+                .and_then(|c| c.as_ref())
+                .and_then(|v| v.as_boolean())
+        })
+        .unwrap_or(false)
+}
+
+pub async fn get_total_posts(state: &web::Data<AppState>) -> Option<i64> {
+    match state
         .session
         .execute_unpaged(&state.stmt_get_counter, (1_i32,))
         .await
     {
-        if let Ok(rows) = res.into_rows_result() {
-            if let Ok(Some((Some(counter),))) = rows.maybe_first_row::<(Option<Counter>,)>() {
-                return counter.0.max(0);
+        Ok(res) => {
+            if let Ok(rows) = res.into_rows_result()
+                && let Ok(Some((Some(counter),))) = rows.maybe_first_row::<(Option<Counter>,)>()
+            {
+                return Some(counter.0.max(0));
             }
+            Some(0)
+        }
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB get_total_posts]: {err}");
+            None
         }
     }
-    0
 }
 
-pub async fn fetch_post_by_uuid(
-    state: &web::Data<AppState>,
-    post_uuid: Uuid,
-) -> Option<(i32, Post)> {
-    if let Ok(res) = state
+pub async fn fetch_post_by_uuid(state: &web::Data<AppState>, post_uuid: Uuid) -> PostLookup {
+    match state
         .session
         .execute_unpaged(&state.stmt_get_post_by_id, (post_uuid,))
         .await
     {
-        if let Ok(rows) = res.into_rows_result() {
-            if let Ok(Some((bucket, ts, title, content))) =
-                rows.maybe_first_row::<(i32, CqlTimestamp, String, String)>()
+        Ok(res) => {
+            if let Ok(rows) = res.into_rows_result()
+                && let Ok(Some((bucket, ts, title, content))) =
+                    rows.maybe_first_row::<(i32, CqlTimestamp, String, String)>()
             {
                 let dt = DateTime::<Utc>::from_timestamp_millis(ts.0).unwrap_or_default();
                 let post = Post {
-                    id: post_uuid,
                     id_hex: post_uuid.simple().to_string(),
                     title,
                     content,
                     created_at: ts.0,
                     date_str: dt.format("%d %b %Y, %H:%M").to_string(),
                 };
-                return Some((bucket, post));
+                return PostLookup::Found(bucket, post);
             }
+            PostLookup::NotFound
+        }
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB fetch_post_by_uuid {post_uuid}]: {err}");
+            PostLookup::Unavailable
         }
     }
-    None
 }

@@ -144,12 +144,6 @@ document.addEventListener('click', (e) => {
         console.log('💾 [SAVE] savedBlogFeedHtml content:', savedBlogFeedHtml);
     }
 
-
-    // Invalidate cached feed HTML if a post is deleted, so fresh data is shown
-    if (e.target.closest('.delete-btn')) {
-        savedBlogFeedHtml = null;
-    }
-
     // Clicking top navigation links (Home / Blog) resets scroll to top
     const navLink = e.target.closest('#main-nav .nav-link');
     if (navLink) {
@@ -162,27 +156,31 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// Invalidate cached feed HTML when creating or updating a post so changes appear in the feed
+// Invalidate cached feed HTML and stale scroll restoration when creating or updating a post
 document.addEventListener('submit', (e) => {
     if (e.target && (e.target.id === 'post-form' || e.target.id === 'edit-form')) {
         savedBlogFeedHtml = null;
+        shouldRestoreBlogScroll = false;
+        savedBlogScrollY = 0;
     }
 });
 
 window.addEventListener('popstate', updateActiveNav);
 
 // HTMX 4 lifecycle events
-document.addEventListener('htmx:after:swap', (e) => {
-
-// Remove the post card from the /blog feed immediately when deleted
+document.addEventListener('htmx:before:request', (e) => {
     const sourceElt =
         (e.detail && e.detail.ctx && e.detail.ctx.sourceElement) || e.target;
-    if (sourceElt && sourceElt.classList && sourceElt.classList.contains('delete-btn')) {
-        const postItem = sourceElt.closest('.post-item');
-        if (postItem) postItem.remove();
-    }
-// /Remove the post card from the /blog feed immediately when deleted
 
+    // Invalidate cached feed HTML & scroll state ONLY after data-hx-confirm is accepted on delete
+    if (sourceElt && sourceElt.classList && sourceElt.classList.contains('delete-btn')) {
+        savedBlogFeedHtml = null;
+        shouldRestoreBlogScroll = false;
+        savedBlogScrollY = 0;
+    }
+});
+
+document.addEventListener('htmx:after:swap', (e) => {
     const swapTarget =
         (e.detail && e.detail.ctx && e.detail.ctx.target) ||
         (e.detail && e.detail.target) ||
@@ -215,6 +213,23 @@ document.addEventListener('htmx:after:swap', (e) => {
     updateSubmitButton();
     updateEditButtons();
     updateActiveNav();
+    autoHideToasts();
+});
+
+document.addEventListener('htmx:finally:request', (e) => {
+// Remove the post card from the /blog feed immediately when deleted
+    const ctx = e.detail && e.detail.ctx;
+    const sourceElt = (ctx && ctx.sourceElement) || e.target;
+    const status = ctx && ctx.response && ctx.response.status;
+    const isDeleted =
+        typeof status === 'number' && ((status >= 200 && status < 300) || status === 404);
+
+    if (isDeleted && sourceElt && sourceElt.classList && sourceElt.classList.contains('delete-btn')) {
+        const postItem = sourceElt.closest('.post-item');
+        if (postItem) postItem.remove();
+    }
+// /Remove the post card from the /blog feed immediately when deleted
+
     autoHideToasts();
 });
 
