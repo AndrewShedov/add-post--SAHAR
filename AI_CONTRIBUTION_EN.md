@@ -3,10 +3,10 @@
 [![Ru](https://img.shields.io/badge/Ru-black?style=flat&logoColor=white)](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/AI_CONTRIBUTION_RU.md)<br>
 
 ### ***AI Model Contribution Breakdown ✨***
-* **Gemini 4 Argon** — core architecture & cybersecurity (60%)
-* **Gemini 4 Hydrogen** — cybersecurity & data integrity (22%)
-* **Gemini 4 Carbon** — cybersecurity (10%)
-* **Claude Fable 5.2** — cybersecurity (8%)
+* **Gemini 4 Argon** — core architecture & cybersecurity (60%) **|v1.0.0|**
+* **Gemini 4 Hydrogen** — cybersecurity & data integrity (22%) **|v1.1.0|**
+* **Gemini 4 Carbon** — cybersecurity (10%) **|v1.1.0|**
+* **Claude Fable 5.2** — cybersecurity (8%) **|v1.1.0|**
 
 ---
 

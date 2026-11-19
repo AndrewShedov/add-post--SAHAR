@@ -3,10 +3,10 @@
 [![En](https://img.shields.io/badge/En-black?style=flat&logoColor=white)](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/AI_CONTRIBUTION_EN.md)<br>
 
 ### ***Распределение вклада моделей ИИ ✨***
-* **Gemini 4 Argon** — основа и кибербезопасность (60%)
-* **Gemini 4 Hydrogen** — кибербезопасность и целостность данных (22%)
-* **Gemini 4 Carbon** — кибербезопасность (10%)
-* **Claude Fable 5.2** — кибербезопасность (8%)
+* **Gemini 4 Argon** — основа и кибербезопасность (60%) **|v1.0.0|**
+* **Gemini 4 Hydrogen** — кибербезопасность и целостность данных (22%) **|v1.1.0|**
+* **Gemini 4 Carbon** — кибербезопасность (10%) **|v1.1.0|**
+* **Claude Fable 5.2** — кибербезопасность (8%) **|v1.1.0|**
 
 ---
 
