@@ -1069,7 +1069,7 @@ git clone https://github.com/AndrewShedov/add-post--SAHAR && cd add-post--SAHAR/
 cargo run
 ~~~
 
-*(Optional: to verify strict code quality and zero warnings before running, use `cargo clippy -- -D warnings`.)*
+> *Optional: to verify strict code quality and zero warnings before running, use `cargo clippy -- -D warnings`.*
 
 Once the build is complete, the application will be available at:
 
