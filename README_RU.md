@@ -10,6 +10,9 @@
 * **Gemini 4 Carbon** — кибербезопасность (10%) **| v1.1.0 |**
 * **Claude Fable 5.2** — кибербезопасность (8%) **| v1.1.0 |**
 
+🤖&nbsp;&nbsp;[Полная кодовая база для ИИ (Repomix XML)](https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/FULL_CODEBASE.repomix.xml)<br>
+
+
 > 📋 [Подробное описание вклада моделей](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/AI_CONTRIBUTION_RU.md)<br>
 > 📋 [Новое в релизе v1.1.0](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/RELEASE_v1.1.0_RU.md)
 
@@ -77,9 +80,6 @@
 
 **Строение:** <br>
 [Full code](https://github.com/AndrewShedov/add-post--SAHAR/tree/main/main) | [Cargo.toml](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/main/Cargo.toml)<br>
-
-**Repomix:** <br>
-[FULL_CODEBASE.repomix.xml](https://github.com/AndrewShedov/add-post--SAHAR/tree/main/main)<br>
 
 **Структура:** <br>
 **S**cyllaDB v2026.2.6 (driver: v1.8.0).<br>

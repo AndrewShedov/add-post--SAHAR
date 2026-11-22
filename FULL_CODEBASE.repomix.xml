@@ -2607,7 +2607,7 @@ dist
 *.key
 README*
 README/
-repomix-output*
+*.repomix.xml
 htmx*
 secrets/
 target/

@@ -10,6 +10,8 @@
 * **Gemini 4 Carbon** — cybersecurity (10%) **| v1.1.0 |**
 * **Claude Fable 5.2** — cybersecurity (8%) **| v1.1.0 |**
 
+🤖&nbsp;&nbsp;[AI-ready full codebase (Repomix XML)](https://raw.githubusercontent.com/AndrewShedov/add-post--SAHAR/refs/heads/main/FULL_CODEBASE.repomix.xml)<br>
+
 > 📋 [Detailed AI model contribution](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/AI_CONTRIBUTION_EN.md)<br>
 > 📋 [New in Release v1.1.0](https://github.com/AndrewShedov/add-post--SAHAR/releases/tag/v1.1.0)
 
@@ -76,9 +78,6 @@ By utilizing **Askama** compile-time templates and **HTMX 4.0.0**, the applicati
 
 **Composition:** <br>
 [Full code](https://github.com/AndrewShedov/add-post--SAHAR/tree/main/main) | [Cargo.toml](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/main/Cargo.toml)<br>
-
-**Repomix:** <br>
-[FULL_CODEBASE.repomix.xml](https://github.com/AndrewShedov/add-post--SAHAR/tree/main/main)<br>
 
 **Structure:** <br>
 **S**cyllaDB v2026.2.6 (driver: v1.8.0).<br>
