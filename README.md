@@ -77,6 +77,9 @@ By utilizing **Askama** compile-time templates and **HTMX 4.0.0**, the applicati
 **Composition:** <br>
 [Full code](https://github.com/AndrewShedov/add-post--SAHAR/tree/main/main) | [Cargo.toml](https://github.com/AndrewShedov/add-post--SAHAR/blob/main/main/Cargo.toml)<br>
 
+**Repomix:** <br>
+[FULL_CODEBASE.repomix.xml](https://github.com/AndrewShedov/add-post--SAHAR/tree/main/main)<br>
+
 **Structure:** <br>
 **S**cyllaDB v2026.2.6 (driver: v1.8.0).<br>
 **A**ctix Web v4.15.0.<br>

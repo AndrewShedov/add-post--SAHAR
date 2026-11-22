@@ -1,0 +1,2635 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  db.rs
+  handlers.rs
+  main.rs
+  models.rs
+  security.rs
+static/
+  app.js
+  favicon.ico
+  style.css
+templates/
+  base.html
+  blog.html
+  home.html
+  post_detail.html
+  post_edit.html
+  post_items.html
+  toast.html
+.gitignore
+.repomixignore
+Cargo.toml
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/db.rs">
+use crate::models::Post;
+use actix_web::web;
+use chrono::{DateTime, Utc};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::response::query_result::QueryResult;
+use scylla::response::PagingState;
+use scylla::statement::batch::{Batch, BatchType};
+use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::unprepared::Statement;
+use scylla::value::{Counter, CqlTimestamp};
+use std::ops::ControlFlow;
+use std::sync::Arc;
+use std::time::Duration;
+use uuid::Uuid;
+
+pub enum PostLookup {
+    Found(i32, Post),
+    NotFound,
+    Unavailable,
+}
+
+pub struct AppState {
+    pub session: Arc<Session>,
+    pub batch_insert_post: Batch,
+    pub stmt_restore_post_by_id: PreparedStatement,
+    pub stmt_update_post: PreparedStatement,
+    pub stmt_update_post_by_id: PreparedStatement,
+    pub stmt_inc_counter: PreparedStatement,
+    pub stmt_dec_counter: PreparedStatement,
+    pub stmt_get_counter: PreparedStatement,
+    pub stmt_get_posts: PreparedStatement,
+    pub stmt_get_posts_paged: PreparedStatement,
+    pub stmt_get_post_by_id: PreparedStatement,
+    pub stmt_delete_post: PreparedStatement,
+    pub stmt_delete_post_by_id: PreparedStatement,
+}
+
+pub async fn init_db() -> AppState {
+    // 1. Establish connection to the local ScyllaDB node
+    let scylla_uri =
+        std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new()
+        .known_node(scylla_uri)
+        .connection_timeout(Duration::from_secs(5))
+        .build()
+        .await
+        .expect("Failed to connect to ScyllaDB");
+
+    // 2. Automatically create the keyspace and tables if they do not exist yet.
+
+    // NOTE (Best Practice & Security):
+    // Auto-initialization is enabled here for zero-config prototype reproducibility.
+    // In a production environment, DDL schema migrations (CREATE/ALTER/DROP) must be
+    // executed separately via a dedicated migration tool, and the web server must
+    // connect using a restricted DB role (SELECT/MODIFY only — Principle of Least Privilege).
+    initialize_schema(&session).await;
+
+    // 3. Switch the active session to the newly created (or existing) keyspace
+    session
+        .use_keyspace("sahar_prototype_add_post", false)
+        .await
+        .expect("Failed to select keyspace");
+
+    sync_on_startup(&session).await;
+
+    let stmt_insert_post = session
+        .prepare(
+            "INSERT INTO posts (bucket, created_at, id, title, content) VALUES (?, ?, ?, ?, ?)",
+        )
+        .await
+        .unwrap();
+    let stmt_insert_post_by_id = session
+        .prepare("INSERT INTO posts_by_id (id, bucket, created_at, title, content) VALUES (?, ?, ?, ?, ?)")
+        .await
+        .unwrap();
+
+    // Pre-build Logged Batch so ScyllaDB coordinator atomically commits both tables via batchlog
+    let mut batch_insert_post = Batch::new(BatchType::Logged);
+    batch_insert_post.append_statement(stmt_insert_post);
+    batch_insert_post.append_statement(stmt_insert_post_by_id);
+
+    // LWT (IF NOT EXISTS) rollback query so Paxos timestamps override the preceding LWT delete
+    let stmt_restore_post_by_id = session
+        .prepare("INSERT INTO posts_by_id (id, bucket, created_at, title, content) VALUES (?, ?, ?, ?, ?) IF NOT EXISTS")
+        .await
+        .unwrap();
+
+    // Enforce LWT (IF EXISTS) consistently across BOTH tables for updates and deletes
+    let stmt_update_post = session
+        .prepare("UPDATE posts SET title = ?, content = ? WHERE bucket = ? AND created_at = ? AND id = ? IF EXISTS")
+        .await
+        .unwrap();
+    let stmt_update_post_by_id = session
+        .prepare("UPDATE posts_by_id SET title = ?, content = ? WHERE id = ? IF EXISTS")
+        .await
+        .unwrap();
+    let stmt_inc_counter = session
+        .prepare("UPDATE post_counts SET total = total + 1 WHERE bucket = ?")
+        .await
+        .unwrap();
+    let stmt_dec_counter = session
+        .prepare("UPDATE post_counts SET total = total - 1 WHERE bucket = ?")
+        .await
+        .unwrap();
+    let stmt_get_counter = session
+        .prepare("SELECT total FROM post_counts WHERE bucket = ?")
+        .await
+        .unwrap();
+    let stmt_get_posts = session
+        .prepare("SELECT created_at, id, title, content FROM posts WHERE bucket = ? LIMIT 5")
+        .await
+        .unwrap();
+    let stmt_get_posts_paged = session
+        .prepare("SELECT created_at, id, title, content FROM posts WHERE bucket = ? AND created_at < ? LIMIT 5")
+        .await
+        .unwrap();
+    let stmt_get_post_by_id = session
+        .prepare("SELECT bucket, created_at, title, content FROM posts_by_id WHERE id = ?")
+        .await
+        .unwrap();
+    let stmt_delete_post = session
+        .prepare("DELETE FROM posts WHERE bucket = ? AND created_at = ? AND id = ? IF EXISTS")
+        .await
+        .unwrap();
+    let stmt_delete_post_by_id = session
+        .prepare("DELETE FROM posts_by_id WHERE id = ? IF EXISTS")
+        .await
+        .unwrap();
+
+    println!("✅ Keyspace 'sahar_prototype_add_post' and tables are ready.");
+
+    AppState {
+        session: Arc::new(session),
+        batch_insert_post,
+        stmt_restore_post_by_id,
+        stmt_update_post,
+        stmt_update_post_by_id,
+        stmt_inc_counter,
+        stmt_dec_counter,
+        stmt_get_counter,
+        stmt_get_posts,
+        stmt_get_posts_paged,
+        stmt_get_post_by_id,
+        stmt_delete_post,
+        stmt_delete_post_by_id,
+    }
+}
+
+// Idempotently creates the `sahar_prototype_add_post` keyspace and required tables.
+async fn initialize_schema(session: &Session) {
+    println!("🧪 Initializing ScyllaDB schema...");
+
+    session
+        .query_unpaged(
+            "CREATE KEYSPACE IF NOT EXISTS sahar_prototype_add_post WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}",
+            &[],
+        )
+        .await
+        .expect("Failed to create keyspace");
+
+    session
+        .query_unpaged(
+            "CREATE TABLE IF NOT EXISTS sahar_prototype_add_post.posts (
+                bucket int,
+                created_at timestamp,
+                id uuid,
+                title text,
+                content text,
+                PRIMARY KEY (bucket, created_at, id)
+            ) WITH CLUSTERING ORDER BY (created_at DESC)",
+            &[],
+        )
+        .await
+        .expect("Failed to create posts table");
+
+    session
+        .query_unpaged(
+            "CREATE TABLE IF NOT EXISTS sahar_prototype_add_post.posts_by_id (
+                id uuid PRIMARY KEY,
+                bucket int,
+                created_at timestamp,
+                title text,
+                content text
+            )",
+            &[],
+        )
+        .await
+        .expect("Failed to create posts_by_id table");
+
+    session
+        .query_unpaged(
+            "CREATE TABLE IF NOT EXISTS sahar_prototype_add_post.post_counts (
+                bucket int PRIMARY KEY,
+                total counter
+            )",
+            &[],
+        )
+        .await
+        .expect("Failed to create post_counts table");
+}
+
+async fn sync_on_startup(session: &Session) {
+    let mut actual_count: i64 = 0;
+
+    let sync_insert_stmt = session
+        .prepare("INSERT INTO posts_by_id (id, bucket, created_at, title, content) VALUES (?, ?, ?, ?, ?)")
+        .await
+        .ok();
+
+    let paged_query = Statement::new(
+        "SELECT bucket, created_at, id, title, content FROM posts WHERE bucket = 1",
+    )
+    .with_page_size(500);
+    let mut paging_state = PagingState::start();
+
+    loop {
+        let (res, paging_state_response) = match session
+            .query_single_page(paged_query.clone(), &[], paging_state)
+            .await
+        {
+            Ok(pair) => pair,
+            Err(err) => {
+                eprintln!("❌ [ScyllaDB sync_on_startup]: {err}");
+                break;
+            }
+        };
+
+        if let Ok(rows) = res.into_rows_result()
+            && let Ok(iter) = rows.rows::<(i32, CqlTimestamp, Uuid, String, String)>()
+        {
+            for (bucket, created_at, id, title, content) in iter.flatten() {
+                actual_count += 1;
+                if let Some(ref stmt) = sync_insert_stmt {
+                    let _ = session
+                        .execute_unpaged(stmt, (id, bucket, created_at, title, content))
+                        .await;
+                }
+            }
+        }
+
+        match paging_state_response.into_paging_control_flow() {
+            ControlFlow::Break(()) => break,
+            ControlFlow::Continue(next_paging_state) => {
+                paging_state = next_paging_state;
+            }
+        }
+    }
+
+    let current_counter: i64 = match session
+        .query_unpaged("SELECT total FROM post_counts WHERE bucket = 1", &[])
+        .await
+    {
+        Ok(res) => res
+            .into_rows_result()
+            .ok()
+            .and_then(|rows| rows.maybe_first_row::<(Option<Counter>,)>().ok().flatten())
+            .and_then(|r| r.0)
+            .map(|c| c.0)
+            .unwrap_or(0),
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB sync_on_startup counter]: {err}");
+            0
+        }
+    };
+
+    let diff = actual_count - current_counter;
+    if diff != 0 {
+        let _ = session
+            .query_unpaged(
+                "UPDATE post_counts SET total = total + ? WHERE bucket = 1",
+                (Counter(diff),),
+            )
+            .await;
+    }
+}
+
+pub fn is_lwt_applied(res: QueryResult) -> bool {
+    res.into_rows_result()
+        .ok()
+        .and_then(|rows| rows.maybe_first_row::<scylla::value::Row>().ok().flatten())
+        .and_then(|row| {
+            row.columns
+                .first()
+                .and_then(|c| c.as_ref())
+                .and_then(|v| v.as_boolean())
+        })
+        .unwrap_or(false)
+}
+
+pub async fn get_total_posts(state: &web::Data<AppState>) -> Option<i64> {
+    match state
+        .session
+        .execute_unpaged(&state.stmt_get_counter, (1_i32,))
+        .await
+    {
+        Ok(res) => {
+            if let Ok(rows) = res.into_rows_result()
+                && let Ok(Some((Some(counter),))) = rows.maybe_first_row::<(Option<Counter>,)>()
+            {
+                return Some(counter.0.max(0));
+            }
+            Some(0)
+        }
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB get_total_posts]: {err}");
+            None
+        }
+    }
+}
+
+pub async fn fetch_post_by_uuid(state: &web::Data<AppState>, post_uuid: Uuid) -> PostLookup {
+    match state
+        .session
+        .execute_unpaged(&state.stmt_get_post_by_id, (post_uuid,))
+        .await
+    {
+        Ok(res) => {
+            if let Ok(rows) = res.into_rows_result()
+                && let Ok(Some((bucket, ts, title, content))) =
+                    rows.maybe_first_row::<(i32, CqlTimestamp, String, String)>()
+            {
+                let dt = DateTime::<Utc>::from_timestamp_millis(ts.0).unwrap_or_default();
+                let post = Post {
+                    id_hex: post_uuid.simple().to_string(),
+                    title,
+                    content,
+                    created_at: ts.0,
+                    date_str: dt.format("%d %b %Y, %H:%M").to_string(),
+                };
+                return PostLookup::Found(bucket, post);
+            }
+            PostLookup::NotFound
+        }
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB fetch_post_by_uuid {post_uuid}]: {err}");
+            PostLookup::Unavailable
+        }
+    }
+}
+</file>
+
+<file path="src/handlers.rs">
+use crate::db::{fetch_post_by_uuid, get_total_posts, is_lwt_applied, AppState, PostLookup};
+use crate::models::{
+    BlogTemplate, DeleteQuery, EditQuery, HomeTemplate, PagingQuery, Post, PostDetailTemplate,
+    PostEditTemplate, PostForm, PostItemsTemplate, ToastTemplate,
+};
+use crate::security::{
+    html_escape_title, internal_error, is_htmx_partial_request, render_not_found, render_page,
+    sanitize_text_input, service_unavailable_response, truncate, validate_origin,
+    VARY_HTMX_HEADERS,
+};
+use actix_web::http::StatusCode;
+use actix_web::{web, Error, HttpRequest, HttpResponse};
+use askama::Template;
+use chrono::{DateTime, Utc};
+use scylla::value::CqlTimestamp;
+use uuid::Uuid;
+
+fn toast_error_response(
+    status: StatusCode,
+    message: &str,
+    retry_after: bool,
+) -> Result<HttpResponse, Error> {
+    let toast_html = ToastTemplate {
+        message: message.to_string(),
+        is_success: false,
+    }
+    .render()
+    .map_err(|e| internal_error("TEMPLATE toast", e))?;
+
+    let mut builder = HttpResponse::build(status);
+    builder
+        .content_type("text/html; charset=utf-8")
+        .insert_header(("HX-Reswap", "none"))
+        .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"));
+    if retry_after {
+        builder.insert_header(("Retry-After", "5"));
+    }
+    Ok(builder.body(toast_html))
+}
+
+async fn render_blog_feed_html(
+    state: &web::Data<AppState>,
+    before: Option<i64>,
+) -> Result<String, Box<HttpResponse>> {
+    let mut posts = Vec::new();
+    let mut next_timestamp = None;
+
+    let res = if let Some(before_ts) = before {
+        state
+            .session
+            .execute_unpaged(
+                &state.stmt_get_posts_paged,
+                (1_i32, CqlTimestamp(before_ts)),
+            )
+            .await
+    } else {
+        state
+            .session
+            .execute_unpaged(&state.stmt_get_posts, (1_i32,))
+            .await
+    };
+
+    let res_data = match res {
+        Ok(data) => data,
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB render_blog_feed_html]: {err}");
+            return Err(Box::new(service_unavailable_response()));
+        }
+    };
+
+    if let Ok(rows) = res_data.into_rows_result()
+        && let Ok(row_iter) = rows.rows::<(CqlTimestamp, Uuid, String, String)>()
+    {
+        for (ts, id, title, content) in row_iter.flatten() {
+            let dt = DateTime::<Utc>::from_timestamp_millis(ts.0).unwrap_or_default();
+            posts.push(Post {
+                id_hex: id.simple().to_string(),
+                // Limit preview card title to 100 chars and post text to 730 chars in the /blog feed
+                title: truncate(&title, 100),
+                content: truncate(&content, 730),
+                created_at: ts.0,
+                date_str: dt.format("%d %b %Y, %H:%M").to_string(),
+            });
+        }
+    }
+
+    if posts.len() == 5 {
+        next_timestamp = posts.last().map(|p| p.created_at);
+    }
+
+    PostItemsTemplate {
+        posts,
+        next_timestamp,
+    }
+    .render()
+    .map_err(|e| {
+        eprintln!("❌ [TEMPLATE post_items]: {e}");
+        Box::new(
+            HttpResponse::InternalServerError()
+                .content_type("text/plain; charset=utf-8")
+                .body("Internal Server Error"),
+        )
+    })
+}
+
+pub async fn index(req: HttpRequest, state: web::Data<AppState>) -> Result<HttpResponse, Error> {
+    let Some(total_posts) = get_total_posts(&state).await else {
+        return Ok(service_unavailable_response());
+    };
+    let partial = HomeTemplate { total_posts }
+        .render()
+        .map_err(|e| internal_error("TEMPLATE home", e))?;
+    render_page(
+        &req,
+        partial,
+        "/",
+        "Add Post (SAHAR)",
+        "Create a new post in the SAHAR stack prototype.",
+        false,
+    )
+}
+
+pub async fn blog(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    query: web::Query<PagingQuery>,
+) -> Result<HttpResponse, Error> {
+    // Loader Delay
+    // if crate::LOADER_DELAY_MS > 0 {
+    //     tokio::time::sleep(std::time::Duration::from_millis(crate::LOADER_DELAY_MS)).await;
+    // }
+    // /Loader Delay
+
+    let items_html = match render_blog_feed_html(&state, query.before).await {
+        Ok(html) => html,
+        Err(resp) => return Ok(*resp),
+    };
+
+    if is_htmx_partial_request(&req) && query.before.is_some() {
+        return Ok(HttpResponse::Ok()
+            .content_type("text/html; charset=utf-8")
+            .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+            .insert_header(("Vary", VARY_HTMX_HEADERS))
+            .body(items_html));
+    }
+
+    let partial = BlogTemplate {
+        posts_html: items_html,
+    }
+    .render()
+    .map_err(|e| internal_error("TEMPLATE blog", e))?;
+
+    let current_path = match query.before {
+        Some(ts) => format!("/blog?before={ts}"),
+        None => "/blog".to_string(),
+    };
+
+    render_page(
+        &req,
+        partial,
+        &current_path,
+        "Blog — Add Post (SAHAR)",
+        "Read the latest posts in the SAHAR stack prototype.",
+        false,
+    )
+}
+
+pub async fn view_post(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse, Error> {
+    let raw_id = path.into_inner();
+    let current_path = format!("/posts/{raw_id}");
+
+    let Ok(post_uuid) = Uuid::parse_str(&raw_id) else {
+        return render_not_found(&req, &current_path);
+    };
+
+    let post = match fetch_post_by_uuid(&state, post_uuid).await {
+        PostLookup::Found(_, post) => post,
+        PostLookup::NotFound => return render_not_found(&req, &current_path),
+        PostLookup::Unavailable => return Ok(service_unavailable_response()),
+    };
+
+    let canonical_path = format!("/posts/{}", post.id_hex);
+    let seo_title = if post.title.is_empty() {
+        format!(
+            "{} — Add Post (SAHAR)",
+            truncate(&post.content, 40).replace(['\n', '\r', '\t'], " ")
+        )
+    } else {
+        format!("{} — Add Post (SAHAR)", post.title)
+    };
+    let seo_desc = truncate(&post.content, 150).replace(['\n', '\r', '\t'], " ");
+
+    let partial = PostDetailTemplate { post: Some(post) }
+        .render()
+        .map_err(|e| internal_error("TEMPLATE post_detail", e))?;
+
+    render_page(
+        &req,
+        partial,
+        &canonical_path,
+        &seo_title,
+        &seo_desc,
+        false,
+    )
+}
+
+pub async fn edit_post_page(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    query: web::Query<EditQuery>,
+) -> Result<HttpResponse, Error> {
+    let raw_id = path.into_inner();
+    let current_path = format!("/posts/{raw_id}/edit");
+
+    let Ok(post_uuid) = Uuid::parse_str(&raw_id) else {
+        return render_not_found(&req, &current_path);
+    };
+
+    let post = match fetch_post_by_uuid(&state, post_uuid).await {
+        PostLookup::Found(_, post) => post,
+        PostLookup::NotFound => return render_not_found(&req, &current_path),
+        PostLookup::Unavailable => return Ok(service_unavailable_response()),
+    };
+
+    let canonical_path = format!("/posts/{}/edit", post.id_hex);
+    let back_url = match query.from.as_deref() {
+        Some("blog") => "/blog".to_string(),
+        _ => format!("/posts/{}", post.id_hex),
+    };
+
+    let partial = PostEditTemplate {
+        post: Some(post),
+        back_url,
+    }
+    .render()
+    .map_err(|e| internal_error("TEMPLATE post_edit", e))?;
+
+    render_page(
+        &req,
+        partial,
+        &canonical_path,
+        "Edit post — Add Post (SAHAR)",
+        "Edit post in the SAHAR stack prototype.",
+        true,
+    )
+}
+
+pub async fn create_post(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    form: web::Form<PostForm>,
+) -> Result<HttpResponse, Error> {
+    validate_origin(&req)?;
+
+    let title = sanitize_text_input(&form.title, 150, false);
+    let content = sanitize_text_input(&form.content, 3000, true);
+
+    if content.is_empty() {
+        return toast_error_response(StatusCode::BAD_REQUEST, "Content is required", false);
+    }
+
+    let post_id = Uuid::new_v4();
+    let now_ms = Utc::now().timestamp_millis();
+    let cql_ts = CqlTimestamp(now_ms);
+
+    let batch_res = state
+        .session
+        .batch(
+            &state.batch_insert_post,
+            (
+                (1_i32, cql_ts, post_id, &title, &content),
+                (post_id, 1_i32, cql_ts, &title, &content),
+            ),
+        )
+        .await;
+
+    if let Err(err) = batch_res {
+        eprintln!("❌ [ScyllaDB create_post batch {post_id}]: {err}");
+        // Preserve user's typed text in the form on DB failure
+        return toast_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Failed to add post",
+            true,
+        );
+    }
+
+    if let Err(err) = state
+        .session
+        .execute_unpaged(&state.stmt_inc_counter, (1_i32,))
+        .await
+    {
+        eprintln!("❌ [ScyllaDB increment counter]: {err}");
+    }
+
+    let total_posts = get_total_posts(&state).await.unwrap_or(0);
+
+    let form_html = HomeTemplate { total_posts }
+        .render()
+        .map_err(|e| internal_error("TEMPLATE home", e))?;
+    let toast_html = ToastTemplate {
+        message: "Post added successfully".to_string(),
+        is_success: true,
+    }
+    .render()
+    .map_err(|e| internal_error("TEMPLATE toast", e))?;
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+        .body(format!("{form_html}\n{toast_html}")))
+}
+
+pub async fn update_post(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    form: web::Form<PostForm>,
+) -> Result<HttpResponse, Error> {
+    validate_origin(&req)?;
+
+    let raw_id = path.into_inner();
+    let Ok(post_uuid) = Uuid::parse_str(&raw_id) else {
+        return toast_error_response(StatusCode::BAD_REQUEST, "Invalid post ID", false);
+    };
+
+    let title = sanitize_text_input(&form.title, 150, false);
+    let content = sanitize_text_input(&form.content, 3000, true);
+
+    if content.is_empty() {
+        return toast_error_response(StatusCode::BAD_REQUEST, "Content is required", false);
+    }
+
+    let (bucket, existing_post) = match fetch_post_by_uuid(&state, post_uuid).await {
+        PostLookup::Found(bucket, post) => (bucket, post),
+        PostLookup::NotFound => {
+            return toast_error_response(
+                StatusCode::NOT_FOUND,
+                "Post not found or already deleted",
+                false,
+            );
+        }
+        PostLookup::Unavailable => {
+            return toast_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Failed to update post",
+                true,
+            );
+        }
+    };
+
+    let cql_ts = CqlTimestamp(existing_post.created_at);
+
+    // Execute LWT (IF EXISTS) on posts_by_id first to guard against concurrent deletion
+    match state
+        .session
+        .execute_unpaged(&state.stmt_update_post_by_id, (&title, &content, post_uuid))
+        .await
+    {
+        Ok(res) => {
+            if !is_lwt_applied(res) {
+                return toast_error_response(
+                    StatusCode::NOT_FOUND,
+                    "Post not found or already deleted",
+                    false,
+                );
+            }
+        }
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB update posts_by_id {post_uuid}]: {err}");
+            return toast_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Failed to update post",
+                true,
+            );
+        }
+    }
+
+    // Execute LWT (IF EXISTS) on posts as well so concurrent delete_post can never leave a resurrected row
+    match state
+        .session
+        .execute_unpaged(
+            &state.stmt_update_post,
+            (&title, &content, bucket, cql_ts, post_uuid),
+        )
+        .await
+    {
+        Ok(res) => {
+            if !is_lwt_applied(res) {
+                return toast_error_response(
+                    StatusCode::NOT_FOUND,
+                    "Post not found or already deleted",
+                    false,
+                );
+            }
+        }
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB update posts {post_uuid}]: {err}");
+            // Compensating LWT rollback in posts_by_id to preserve cross-table consistency
+            let _ = state
+                .session
+                .execute_unpaged(
+                    &state.stmt_update_post_by_id,
+                    (&existing_post.title, &existing_post.content, post_uuid),
+                )
+                .await;
+
+            return toast_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Failed to update post",
+                true,
+            );
+        }
+    }
+
+    let updated_post = match fetch_post_by_uuid(&state, post_uuid).await {
+        PostLookup::Found(_, post) => post,
+        PostLookup::NotFound | PostLookup::Unavailable => Post {
+            id_hex: existing_post.id_hex,
+            title,
+            content,
+            created_at: existing_post.created_at,
+            date_str: existing_post.date_str,
+        },
+    };
+
+    let post_url = format!("/posts/{}", updated_post.id_hex);
+    let seo_title = if updated_post.title.is_empty() {
+        format!(
+            "{} — Add Post (SAHAR)",
+            truncate(&updated_post.content, 40).replace(['\n', '\r', '\t'], " ")
+        )
+    } else {
+        format!("{} — Add Post (SAHAR)", updated_post.title)
+    };
+    let safe_title = html_escape_title(&seo_title);
+
+    let detail_html = PostDetailTemplate {
+        post: Some(updated_post),
+    }
+    .render()
+    .map_err(|e| internal_error("TEMPLATE post_detail", e))?;
+
+    let toast_html = ToastTemplate {
+        message: "Post updated successfully".to_string(),
+        is_success: true,
+    }
+    .render()
+    .map_err(|e| internal_error("TEMPLATE toast", e))?;
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .insert_header(("HX-Push-Url", post_url))
+        .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+        .body(format!(
+            "<title>{safe_title}</title>\n{detail_html}\n{toast_html}"
+        )))
+}
+
+pub async fn delete_post(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    query: web::Query<DeleteQuery>,
+) -> Result<HttpResponse, Error> {
+    validate_origin(&req)?;
+
+    let raw_id = path.into_inner();
+    let Ok(post_uuid) = Uuid::parse_str(&raw_id) else {
+        return toast_error_response(StatusCode::BAD_REQUEST, "Invalid post ID", false);
+    };
+
+    // Fetch authoritative bucket and created_at from DB — never trust client-supplied values
+    let (bucket, existing_post) = match fetch_post_by_uuid(&state, post_uuid).await {
+        PostLookup::Found(bucket, post) => (bucket, post),
+        PostLookup::NotFound => {
+            return toast_error_response(
+                StatusCode::NOT_FOUND,
+                "Post not found or already deleted",
+                false,
+            );
+        }
+        PostLookup::Unavailable => {
+            return toast_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Failed to delete post",
+                true,
+            );
+        }
+    };
+
+    // Atomically claim deletion via LWT (IF EXISTS) to prevent concurrent double-decrement
+    match state
+        .session
+        .execute_unpaged(&state.stmt_delete_post_by_id, (post_uuid,))
+        .await
+    {
+        Ok(res) => {
+            if !is_lwt_applied(res) {
+                return toast_error_response(
+                    StatusCode::NOT_FOUND,
+                    "Post not found or already deleted",
+                    false,
+                );
+            }
+        }
+        Err(err) => {
+            eprintln!("❌ [ScyllaDB delete posts_by_id {post_uuid}]: {err}");
+            return toast_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Failed to delete post",
+                true,
+            );
+        }
+    }
+
+    let del_main = state
+        .session
+        .execute_unpaged(
+            &state.stmt_delete_post,
+            (bucket, CqlTimestamp(existing_post.created_at), post_uuid),
+        )
+        .await;
+
+    if let Err(err) = del_main {
+        eprintln!("❌ [ScyllaDB delete posts {post_uuid}]: {err}");
+        // Compensating LWT rollback (IF NOT EXISTS) so Paxos timestamp wins over the preceding LWT delete
+        let _ = state
+            .session
+            .execute_unpaged(
+                &state.stmt_restore_post_by_id,
+                (
+                    post_uuid,
+                    bucket,
+                    CqlTimestamp(existing_post.created_at),
+                    &existing_post.title,
+                    &existing_post.content,
+                ),
+            )
+            .await;
+
+        return toast_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Failed to delete post",
+            true,
+        );
+    }
+
+    // Decrement counter only when LWT confirmed deletion and current counter is > 0 (never go negative)
+    if let Some(total) = get_total_posts(&state).await
+        && total > 0
+        && let Err(err) = state
+            .session
+            .execute_unpaged(&state.stmt_dec_counter, (1_i32,))
+            .await
+    {
+        eprintln!("❌ [ScyllaDB decrement counter]: {err}");
+    }
+
+    let toast_html = ToastTemplate {
+        message: "Post deleted successfully".to_string(),
+        is_success: true,
+    }
+    .render()
+    .map_err(|e| internal_error("TEMPLATE toast", e))?;
+
+    if query.redirect.as_deref() == Some("blog") {
+        let items_html = match render_blog_feed_html(&state, None).await {
+            Ok(html) => html,
+            Err(resp) => return Ok(*resp),
+        };
+        let blog_html = BlogTemplate {
+            posts_html: items_html,
+        }
+        .render()
+        .map_err(|e| internal_error("TEMPLATE blog", e))?;
+
+        return Ok(HttpResponse::Ok()
+            .content_type("text/html; charset=utf-8")
+            .insert_header(("HX-Push-Url", "/blog"))
+            .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+            .insert_header(("Vary", VARY_HTMX_HEADERS))
+            .body(format!(
+                "<title>Blog — Add Post (SAHAR)</title>\n{blog_html}\n{toast_html}"
+            )));
+    }
+
+    Ok(HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+        .body(toast_html))
+}
+</file>
+
+<file path="src/main.rs">
+// Artificial delay in milliseconds to visually inspect and record UI loaders.
+// Set to 0 for instant speed, or e.g. 800 to see "Loading posts... ⏳" and "Loading more posts... ⏳".
+
+// Loader Delay
+// pub const LOADER_DELAY_MS: u64 = 800;
+// /Loader Delay
+
+mod db;
+mod handlers;
+mod models;
+mod security;
+
+use actix_files::Files;
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
+use std::time::Duration;
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    // Fail-Fast validation of runtime origin & canonical URL config before binding sockets
+    security::init_security_config();
+
+    let app_state = web::Data::new(db::init_db().await);
+    let bind_addr =
+        std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+
+    println!("🚀 SAHAR server is running at http://{bind_addr}");
+
+    HttpServer::new(move || {
+        App::new()
+            .app_data(app_state.clone())
+            // DoS, Memory Exhaustion & CWE-209 Protection:
+            // Strictly limits incoming form payloads to 64 KB and suppresses raw Rust/Serde parser errors.
+            .app_data(
+                web::FormConfig::default()
+                    .limit(65536)
+                    .error_handler(|err, _req| {
+                        eprintln!("⚠️ [FORM ERROR]: {err}");
+                        actix_web::error::InternalError::from_response(
+                            err,
+                            HttpResponse::BadRequest().body("Bad Request"),
+                        )
+                        .into()
+                    }),
+            )
+            .app_data(
+                web::QueryConfig::default().error_handler(|err, _req| {
+                    eprintln!("⚠️ [QUERY ERROR]: {err}");
+                    actix_web::error::InternalError::from_response(
+                        err,
+                        HttpResponse::BadRequest().body("Bad Request"),
+                    )
+                    .into()
+                }),
+            )
+            .app_data(
+                web::PathConfig::default().error_handler(|err, _req| {
+                    eprintln!("⚠️ [PATH ERROR]: {err}");
+                    actix_web::error::InternalError::from_response(
+                        err,
+                        HttpResponse::BadRequest().body("Bad Request"),
+                    )
+                    .into()
+                }),
+            )
+            // Strict HTTP Security Headers Middleware (Zero 'unsafe-inline' tolerance)
+            .wrap(
+                middleware::DefaultHeaders::new()
+                    .add(("X-Frame-Options", "DENY"))
+                    .add(("X-Content-Type-Options", "nosniff"))
+                    .add((
+                        "Content-Security-Policy",
+                        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none';",
+                    ))
+                    .add((
+                        "Strict-Transport-Security",
+                        "max-age=31536000; includeSubDomains; preload",
+                    ))
+                    .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
+                    .add((
+                        "Permissions-Policy",
+                        "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()",
+                    ))
+                    .add(("Cross-Origin-Opener-Policy", "same-origin"))
+                    .add(("Cross-Origin-Resource-Policy", "same-origin"))
+                    .add(("X-Permitted-Cross-Domain-Policies", "none")),
+            )
+            .service(Files::new("/static", "./static"))
+            .route("/", web::get().to(handlers::index))
+            .route("/blog", web::get().to(handlers::blog))
+            .route("/posts/{id}", web::get().to(handlers::view_post))
+            .route("/posts/{id}/edit", web::get().to(handlers::edit_post_page))
+            .route("/api/posts", web::post().to(handlers::create_post))
+            .route("/api/posts/{id}/edit", web::post().to(handlers::update_post))
+            .route("/api/posts/{id}", web::delete().to(handlers::delete_post))
+    })
+    .client_request_timeout(Duration::from_secs(5))
+    .keep_alive(Duration::from_secs(30))
+    .bind(&bind_addr)?
+    .run()
+    .await
+}
+</file>
+
+<file path="src/models.rs">
+use askama::Template;
+use serde::Deserialize;
+
+pub struct Post {
+    pub id_hex: String,
+    pub title: String,
+    pub content: String,
+    pub created_at: i64,
+    pub date_str: String,
+}
+
+#[derive(Deserialize)]
+pub struct PostForm {
+    pub title: String,
+    pub content: String,
+}
+
+#[derive(Deserialize)]
+pub struct PagingQuery {
+    pub before: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct EditQuery {
+    pub from: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct DeleteQuery {
+    pub redirect: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "base.html")]
+pub struct BaseTemplate {
+    pub page_title: String,
+    pub page_description: String,
+    pub content_html: String,
+    pub current_path: String,
+    pub canonical_base_url: String,
+    pub noindex: bool,
+}
+
+#[derive(Template)]
+#[template(path = "home.html")]
+pub struct HomeTemplate {
+    pub total_posts: i64,
+}
+
+#[derive(Template)]
+#[template(path = "blog.html")]
+pub struct BlogTemplate {
+    pub posts_html: String,
+}
+
+#[derive(Template)]
+#[template(path = "post_items.html")]
+pub struct PostItemsTemplate {
+    pub posts: Vec<Post>,
+    pub next_timestamp: Option<i64>,
+}
+
+#[derive(Template)]
+#[template(path = "post_detail.html")]
+pub struct PostDetailTemplate {
+    pub post: Option<Post>,
+}
+
+#[derive(Template)]
+#[template(path = "post_edit.html")]
+pub struct PostEditTemplate {
+    pub post: Option<Post>,
+    pub back_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "toast.html")]
+pub struct ToastTemplate {
+    pub message: String,
+    pub is_success: bool,
+}
+</file>
+
+<file path="src/security.rs">
+use crate::models::{BaseTemplate, PostDetailTemplate};
+use actix_web::{error, Error, HttpRequest, HttpResponse};
+use askama::Template;
+use std::fmt::Display;
+use std::sync::OnceLock;
+
+static ALLOWED_ORIGINS: OnceLock<Vec<String>> = OnceLock::new();
+static CANONICAL_BASE_URL: OnceLock<String> = OnceLock::new();
+
+pub const VARY_HTMX_HEADERS: &str = "HX-Request, HX-Request-Type, HX-History-Restore-Request";
+
+// CWE-209 & OWASP A09 Mitigation:
+// Logs internal error details strictly to server stderr and returns a generic error to the client.
+pub fn internal_error<E: Display>(context: &str, err: E) -> Error {
+    eprintln!("❌ [{context}]: {err}");
+    error::ErrorInternalServerError("Internal Server Error")
+}
+
+pub fn service_unavailable_response() -> HttpResponse {
+    HttpResponse::ServiceUnavailable()
+        .content_type("text/plain; charset=utf-8")
+        .insert_header(("Retry-After", "5"))
+        .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+        .body("Service Unavailable")
+}
+
+// Allowlist of trusted Origins for Cross-Site Request Forgery (CSRF) protection.
+// Reads `ALLOWED_ORIGINS` (comma-separated) from env or falls back to local prototype origins.
+fn allowed_origins() -> &'static [String] {
+    ALLOWED_ORIGINS.get_or_init(|| {
+        if let Ok(raw) = std::env::var("ALLOWED_ORIGINS") {
+            let parsed: Vec<String> = raw
+                .split(',')
+                .map(|s| s.trim().trim_end_matches('/').to_ascii_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !parsed.is_empty() {
+                return parsed;
+            }
+        }
+        vec![
+            "http://127.0.0.1:8080".to_string(),
+            "http://localhost:8080".to_string(),
+        ]
+    })
+}
+
+pub fn canonical_base_url() -> &'static str {
+    CANONICAL_BASE_URL.get_or_init(|| {
+        std::env::var("CANONICAL_BASE_URL")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "http://127.0.0.1:8080".to_string())
+    })
+}
+
+fn validate_base_origin(value: &str) -> bool {
+    let authority = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+        .unwrap_or("");
+    !authority.is_empty() && !authority.contains(['/', '?', '#', '@', ' '])
+}
+
+// Fail-Fast startup warmup & strict validation of runtime security config
+pub fn init_security_config() {
+    let base = canonical_base_url();
+    assert!(
+        validate_base_origin(base),
+        "Invalid CANONICAL_BASE_URL '{base}': must be exact scheme://host[:port] with no path, query, or fragment"
+    );
+
+    for origin in allowed_origins() {
+        assert!(
+            validate_base_origin(origin),
+            "Invalid ALLOWED_ORIGINS entry '{origin}': must be exact scheme://host[:port] with no path or query"
+        );
+    }
+}
+
+// Fail-Closed Anti-CSRF (Cross-Site Request Forgery) Validation:
+// Invoked on all state-mutating endpoints (POST / DELETE).
+// Rejects malformed non-ASCII headers immediately (fail-closed), enforces `Sec-Fetch-Site: same-origin`
+// (when provided), checks `Origin` with strict priority (blocking `Origin: null` and foreign origins),
+// and validates `Referer` strictly along RFC 3986 authority boundaries when `Origin` is absent.
+pub fn validate_origin(req: &HttpRequest) -> Result<(), Error> {
+    if let Some(raw_fetch_site) = req.headers().get("Sec-Fetch-Site") {
+        let Ok(fetch_site) = raw_fetch_site.to_str() else {
+            eprintln!("🛡️ [CSRF BLOCKED] Malformed non-ASCII Sec-Fetch-Site header");
+            return Err(error::ErrorForbidden("Forbidden"));
+        };
+        if fetch_site != "same-origin" {
+            eprintln!("🛡️ [CSRF BLOCKED] Invalid Sec-Fetch-Site: {fetch_site:?}");
+            return Err(error::ErrorForbidden("Forbidden"));
+        }
+    }
+
+    let origins = allowed_origins();
+
+    if let Some(raw_origin) = req.headers().get("Origin") {
+        let Ok(origin) = raw_origin.to_str() else {
+            eprintln!("🛡️ [CSRF BLOCKED] Malformed non-ASCII Origin header");
+            return Err(error::ErrorForbidden("Forbidden"));
+        };
+        let normalized_origin = origin.to_ascii_lowercase();
+        if !origins.iter().any(|allowed| allowed == &normalized_origin) {
+            eprintln!("🛡️ [CSRF BLOCKED] Untrusted Origin: {origin:?}");
+            return Err(error::ErrorForbidden("Forbidden"));
+        }
+        return Ok(());
+    }
+
+    let Some(raw_referer) = req.headers().get("Referer") else {
+        eprintln!("🛡️ [CSRF BLOCKED] Missing both Origin and Referer headers");
+        return Err(error::ErrorForbidden("Forbidden"));
+    };
+    let Ok(referer) = raw_referer.to_str() else {
+        eprintln!("🛡️ [CSRF BLOCKED] Malformed non-ASCII Referer header");
+        return Err(error::ErrorForbidden("Forbidden"));
+    };
+
+    let referer_lower = referer.to_ascii_lowercase();
+    let is_valid_referer = origins.iter().any(|allowed| {
+        referer_lower == *allowed
+            || referer_lower.strip_prefix(allowed.as_str()).is_some_and(|rest| {
+                rest.starts_with('/') || rest.starts_with('?') || rest.starts_with('#')
+            })
+    });
+
+    if !is_valid_referer {
+        eprintln!("🛡️ [CSRF BLOCKED] Missing Origin and untrusted Referer: {referer:?}");
+        return Err(error::ErrorForbidden("Forbidden"));
+    }
+
+    Ok(())
+}
+
+fn is_stripped_unicode(ch: char) -> bool {
+    matches!(
+        ch,
+        '\0'
+            | '\u{061C}' // Arabic Letter Mark
+            | '\u{200B}' // Zero-Width Space (preserves \u{200C} ZWNJ and \u{200D} ZWJ for compound emojis!)
+            | '\u{200E}'
+            | '\u{200F}' // LRM / RLM
+            | '\u{202A}'..='\u{202E}' // BiDi embedding & override
+            | '\u{2060}' // Word Joiner
+            | '\u{2066}'..='\u{2069}' // BiDi isolates
+            | '\u{FEFF}' // BOM / Zero-Width No-Break Space
+    )
+}
+
+fn is_edge_blank(ch: char) -> bool {
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            '\u{2800}' | '\u{3164}' | '\u{FFA0}' | '\u{115F}' | '\u{1160}'
+        )
+}
+
+fn is_inline_blank(ch: char) -> bool {
+    ch != '\n' && is_edge_blank(ch)
+}
+
+// Single-Pass Input Sanitization, CRLF Normalization & Blank-Line Flood Protection:
+// Strips null bytes, control chars, and dangerous BiDi/zero-width overrides while preserving ZWJ
+// compound emojis, normalizes CRLF/CR/\u{2028}/\u{2029} -> LF, collapses blank-line floods
+// (even with spaces/tabs/blank chars via `is_inline_blank`), and truncates safely by Unicode scalars.
+pub fn sanitize_text_input(input: &str, max_chars: usize, allow_newlines: bool) -> String {
+    let mut cleaned = String::with_capacity(input.len().min(max_chars * 4));
+    let mut consecutive_newlines: usize = 0;
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\r' || ch == '\n' || ch == '\u{2028}' || ch == '\u{2029}' {
+            if ch == '\r' && chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            if allow_newlines {
+                while let Some(last) = cleaned.chars().next_back()
+                    && is_inline_blank(last)
+                {
+                    cleaned.pop();
+                }
+                if !cleaned.is_empty() {
+                    consecutive_newlines += 1;
+                    if consecutive_newlines <= 2 {
+                        cleaned.push('\n');
+                    }
+                }
+            } else if !cleaned.is_empty() && !cleaned.ends_with(' ') {
+                cleaned.push(' ');
+            }
+            continue;
+        }
+
+        if ch == '\t' {
+            if allow_newlines {
+                cleaned.push('\t');
+            } else if !cleaned.is_empty() && !cleaned.ends_with(' ') {
+                cleaned.push(' ');
+            }
+            continue;
+        }
+
+        if is_stripped_unicode(ch) || ch.is_control() {
+            continue;
+        }
+
+        if !is_edge_blank(ch) {
+            consecutive_newlines = 0;
+        }
+        cleaned.push(ch);
+    }
+
+    let trimmed = cleaned.trim_matches(is_edge_blank);
+    trimmed
+        .chars()
+        .take(max_chars)
+        .collect::<String>()
+        .trim_end_matches(is_edge_blank)
+        .to_string()
+}
+
+// Safe HTMX 4 Header Inspection:
+// Returns true ONLY when HTMX expects a partial HTML fragment.
+// On browser Back/Forward navigation, HTMX 4 sends `hx-history-restore-request: true`
+// (or `hx-request-type: full`) and expects the full page containing `<main data-hx-history-elt>`.
+pub fn is_htmx_partial_request(req: &HttpRequest) -> bool {
+    let is_htmx =
+        req.headers().contains_key("hx-request") || req.headers().contains_key("hx-request-type");
+    let is_history_restore = req.headers().contains_key("hx-history-restore-request");
+    let is_full_request = req
+        .headers()
+        .get("hx-request-type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == "full");
+
+    is_htmx && !is_history_restore && !is_full_request
+}
+
+// Memory-Safe UTF-8 Character Truncation:
+// Iterates over Unicode scalar values (`.chars()`) rather than raw byte slices,
+// preventing server panics on multi-byte UTF-8 character boundaries and emojis.
+pub fn truncate(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() > max {
+        let mut truncated = s.chars().take(max).collect::<String>().trim_end().to_string();
+        truncated.push_str("...");
+        truncated
+    } else {
+        s.to_string()
+    }
+}
+
+// Anti-XSS Escaping for Dynamic <title> Tags in HTMX Partial Responses:
+// Since partial HTMX responses prepend `<title>` outside `BaseTemplate`, this function
+// sanitizes HTML control characters (&, <, >, ", ') to prevent tag injection and XSS.
+pub fn html_escape_title(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+// Secure SSR & Partial HTML Renderer:
+// Explicitly enforces `charset=utf-8` (mitigating charset-sniffing XSS), sets
+// `Cache-Control: no-store, no-cache, must-revalidate`, and isolates HTMX vs full-page caches via `Vary`.
+pub fn render_page(
+    req: &HttpRequest,
+    partial: String,
+    path: &str,
+    page_title: &str,
+    page_description: &str,
+    noindex: bool,
+) -> Result<HttpResponse, Error> {
+    if is_htmx_partial_request(req) {
+        let safe_title = html_escape_title(page_title);
+        Ok(HttpResponse::Ok()
+            .content_type("text/html; charset=utf-8")
+            .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+            .insert_header(("Vary", VARY_HTMX_HEADERS))
+            .body(format!("<title>{safe_title}</title>\n{partial}")))
+    } else {
+        let base = BaseTemplate {
+            page_title: page_title.to_string(),
+            page_description: page_description.to_string(),
+            content_html: partial,
+            current_path: path.to_string(),
+            canonical_base_url: canonical_base_url().to_string(),
+            noindex,
+        };
+        let body = base
+            .render()
+            .map_err(|e| internal_error("TEMPLATE base", e))?;
+        Ok(HttpResponse::Ok()
+            .content_type("text/html; charset=utf-8")
+            .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+            .insert_header(("Vary", VARY_HTMX_HEADERS))
+            .body(body))
+    }
+}
+
+// Safe 404 Not Found Renderer:
+// Returns a genuine HTTP 404 status code without leaking internal database details or stack traces,
+// and suppresses canonical/index signals so arbitrary invalid URLs are never indexed.
+pub fn render_not_found(req: &HttpRequest, current_path: &str) -> Result<HttpResponse, Error> {
+    let partial = PostDetailTemplate { post: None }
+        .render()
+        .map_err(|e| internal_error("TEMPLATE post_detail 404", e))?;
+    let page_title = "Post not found — Add Post (SAHAR)";
+
+    if is_htmx_partial_request(req) {
+        let safe_title = html_escape_title(page_title);
+        Ok(HttpResponse::NotFound()
+            .content_type("text/html; charset=utf-8")
+            .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+            .insert_header(("Vary", VARY_HTMX_HEADERS))
+            .body(format!("<title>{safe_title}</title>\n{partial}")))
+    } else {
+        let base = BaseTemplate {
+            page_title: page_title.to_string(),
+            page_description: "The requested post was not found.".to_string(),
+            content_html: partial,
+            current_path: current_path.to_string(),
+            canonical_base_url: canonical_base_url().to_string(),
+            noindex: true,
+        };
+        let body = base
+            .render()
+            .map_err(|e| internal_error("TEMPLATE base 404", e))?;
+        Ok(HttpResponse::NotFound()
+            .content_type("text/html; charset=utf-8")
+            .insert_header(("Cache-Control", "no-store, no-cache, must-revalidate"))
+            .insert_header(("Vary", VARY_HTMX_HEADERS))
+            .body(body))
+    }
+}
+</file>
+
+<file path="static/app.js">
+// Disable browser's default scroll jumping so we control SPA scroll restoration precisely
+if ('scrollRestoration' in history) {
+    history.scrollRestoration = 'manual';
+}
+
+let savedBlogScrollY = 0;
+let savedBlogFeedHtml = null;
+let shouldRestoreBlogScroll = false;
+
+
+function resetFormsOnLoad() {
+    // 1. Reset the Create Post form on page load/refresh (prevents Firefox F5 form restoration)
+    const postForm = document.getElementById('post-form');
+    if (postForm) {
+        postForm.reset();
+        const titleField = document.getElementById('title');
+        const contentField = document.getElementById('content');
+        if (titleField) titleField.value = '';
+        if (contentField) contentField.value = '';
+    }
+    updateSubmitButton();
+
+    // 2. Reset the Edit Post form to the original database values on refresh
+    resetEditFormToOriginal();
+}
+
+function updateSubmitButton() {
+    const contentField = document.getElementById('content');
+    const btn = document.getElementById('submit-btn');
+    if (!contentField || !btn) return;
+
+    const hasText = contentField.value.trim().length > 0;
+    btn.hidden = !hasText;
+    btn.disabled = !hasText;
+    btn.classList.toggle('hidden', !hasText);
+}
+
+function resetEditFormToOriginal() {
+    const editTitle = document.getElementById('edit-title');
+    const editContent = document.getElementById('edit-content');
+    if (!editTitle || !editContent) return;
+
+    editTitle.value = editTitle.dataset.original || '';
+    editContent.value = editContent.dataset.original || '';
+    updateEditButtons();
+}
+
+function updateEditButtons() {
+    const editTitle = document.getElementById('edit-title');
+    const editContent = document.getElementById('edit-content');
+    const cancelBtn = document.getElementById('cancel-edit-btn');
+    const publishBtn = document.getElementById('publish-edit-btn');
+
+    if (!editTitle || !editContent || !cancelBtn || !publishBtn) return;
+
+    const origTitle = editTitle.dataset.original || '';
+    const origContent = editContent.dataset.original || '';
+
+    const isModified =
+        editTitle.value !== origTitle || editContent.value !== origContent;
+    const hasValidContent = editContent.value.trim().length > 0;
+
+    // Show Cancel button whenever title or text differs from the original post
+    cancelBtn.hidden = !isModified;
+    cancelBtn.classList.toggle('hidden', !isModified);
+
+    // Show Publish button when modified AND required * Text field is not empty
+    const canPublish = isModified && hasValidContent;
+    publishBtn.hidden = !canPublish;
+    publishBtn.disabled = !canPublish;
+    publishBtn.classList.toggle('hidden', !canPublish);
+}
+
+function updateActiveNav() {
+    const currentPath = window.location.pathname;
+    document.querySelectorAll('#main-nav .nav-link').forEach((link) => {
+        const href = link.getAttribute('href');
+        const isBlogSection =
+            href === '/blog' &&
+            (currentPath.startsWith('/blog') || currentPath.startsWith('/posts/'));
+        link.classList.toggle('active', href === currentPath || isBlogSection);
+    });
+}
+
+function autoHideToasts() {
+    const toasts = document.querySelectorAll('#toast-container .toast:not([data-timer-set])');
+    toasts.forEach((toast) => {
+        toast.setAttribute('data-timer-set', 'true');
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.remove();
+            }
+        }, 4000);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    resetFormsOnLoad();
+    updateActiveNav();
+});
+
+window.addEventListener('pageshow', () => {
+    resetFormsOnLoad();
+    updateActiveNav();
+});
+
+document.addEventListener('input', (e) => {
+    if (!e.target) return;
+    if (e.target.id === 'content') {
+        updateSubmitButton();
+    } else if (e.target.id === 'edit-title' || e.target.id === 'edit-content') {
+        updateEditButtons();
+    }
+});
+
+document.addEventListener('click', (e) => {
+    if (e.target.classList.contains('toast-close')) {
+        const toast = e.target.closest('.toast');
+        if (toast) toast.remove();
+    }
+
+    // Restore original post content when Cancel is clicked
+    if (e.target.id === 'cancel-edit-btn') {
+        resetEditFormToOriginal();
+    }
+
+    // Save scroll position when clicking a post or edit button in /blog.
+    // Save feed HTML ONLY if Infinite Scroll has loaded more than the initial 5 posts!
+    const leavingBlogToPost = e.target.closest('.post-card-link, .post-item .edit-btn');
+    if (leavingBlogToPost && window.location.pathname.startsWith('/blog')) {
+        savedBlogScrollY = window.scrollY;
+        const feedList = document.getElementById('feed-list');
+        const loadedPostsCount = feedList ? feedList.querySelectorAll('.post-item').length : 0;
+
+        if (feedList && loadedPostsCount > 5 && feedList.innerHTML.length < 2000000) {
+            savedBlogFeedHtml = feedList.innerHTML;
+        } else {
+            savedBlogFeedHtml = null;
+        }
+        shouldRestoreBlogScroll = true;
+
+        console.log('💾 [SAVE] savedBlogScrollY:', savedBlogScrollY);
+        console.log('💾 [SAVE] savedBlogFeedHtml size (chars):', savedBlogFeedHtml ? savedBlogFeedHtml.length : 0);
+        console.log('💾 [SAVE] savedBlogFeedHtml content:', savedBlogFeedHtml);
+    }
+
+    // Clicking top navigation links (Home / Blog) resets scroll to top
+    const navLink = e.target.closest('#main-nav .nav-link');
+    if (navLink) {
+        shouldRestoreBlogScroll = false;
+        savedBlogScrollY = 0;
+        savedBlogFeedHtml = null;
+        document.querySelectorAll('#main-nav .nav-link').forEach((link) => {
+            link.classList.toggle('active', link === navLink);
+        });
+    }
+});
+
+// Invalidate cached feed HTML and stale scroll restoration when creating or updating a post
+document.addEventListener('submit', (e) => {
+    if (e.target && (e.target.id === 'post-form' || e.target.id === 'edit-form')) {
+        savedBlogFeedHtml = null;
+        shouldRestoreBlogScroll = false;
+        savedBlogScrollY = 0;
+    }
+});
+
+window.addEventListener('popstate', updateActiveNav);
+
+// HTMX 4 lifecycle events
+document.addEventListener('htmx:before:request', (e) => {
+    const sourceElt =
+        (e.detail && e.detail.ctx && e.detail.ctx.sourceElement) || e.target;
+
+    // Invalidate cached feed HTML & scroll state ONLY after data-hx-confirm is accepted on delete
+    if (sourceElt && sourceElt.classList && sourceElt.classList.contains('delete-btn')) {
+        savedBlogFeedHtml = null;
+        shouldRestoreBlogScroll = false;
+        savedBlogScrollY = 0;
+    }
+});
+
+document.addEventListener('htmx:after:swap', (e) => {
+    const swapTarget =
+        (e.detail && e.detail.ctx && e.detail.ctx.target) ||
+        (e.detail && e.detail.target) ||
+        e.target;
+
+    if (swapTarget && swapTarget.id === 'main-content') {
+        if (window.location.pathname.startsWith('/blog') && shouldRestoreBlogScroll) {
+            const feedList = document.getElementById('feed-list');
+            if (feedList && savedBlogFeedHtml) {
+                feedList.innerHTML = savedBlogFeedHtml;
+                if (window.htmx) {
+                    window.htmx.process(feedList);
+                }
+            }
+
+            savedBlogFeedHtml = null; // Immediately free RAM after restoring the feed
+
+            const targetY = savedBlogScrollY;
+            window.scrollTo(0, targetY);
+            requestAnimationFrame(() => window.scrollTo(0, targetY));
+            shouldRestoreBlogScroll = false;
+
+            console.log('🎯 [RESTORE] Scrolled back to Y:', targetY);
+            console.log('🧹 [CLEANUP] savedBlogFeedHtml after restore:', savedBlogFeedHtml);
+        } else {
+            window.scrollTo(0, 0);
+        }
+    }
+
+    updateSubmitButton();
+    updateEditButtons();
+    updateActiveNav();
+    autoHideToasts();
+});
+
+document.addEventListener('htmx:finally:request', (e) => {
+// Remove the post card from the /blog feed immediately when deleted
+    const ctx = e.detail && e.detail.ctx;
+    const sourceElt = (ctx && ctx.sourceElement) || e.target;
+    const status = ctx && ctx.response && ctx.response.status;
+    const isDeleted =
+        typeof status === 'number' && ((status >= 200 && status < 300) || status === 404);
+
+    if (isDeleted && sourceElt && sourceElt.classList && sourceElt.classList.contains('delete-btn')) {
+        const postItem = sourceElt.closest('.post-item');
+        if (postItem) postItem.remove();
+    }
+// /Remove the post card from the /blog feed immediately when deleted
+
+    autoHideToasts();
+});
+
+document.addEventListener('htmx:after:settle', () => {
+    updateSubmitButton();
+    updateEditButtons();
+    updateActiveNav();
+    autoHideToasts();
+});
+
+// Loader Delay
+// Show initial "Loading posts... ⏳" loader when navigating to /blog
+
+// document.addEventListener('htmx:before:request', (e) => {
+//     const target =
+//         (e.detail && e.detail.ctx && e.detail.ctx.target) ||
+//         (e.detail && e.detail.target) ||
+//         e.target;
+//     const sourceElt =
+//         (e.detail && e.detail.ctx && e.detail.ctx.sourceElement) || e.target;
+
+//     if (
+//         target &&
+//         target.id === 'main-content' &&
+//         sourceElt &&
+//         sourceElt.getAttribute('href') === '/blog' &&
+//         !shouldRestoreBlogScroll
+//     ) {
+//         target.innerHTML =
+//             '<div class="blog-container"><div class="scroll-loader">Loading posts... ⏳</div></div>';
+//     }
+// });
+ 
+
+// Show "Loading posts... ⏳" immediately when pressing F5 (refresh) on /blog
+
+// window.addEventListener('beforeunload', () => {
+//     if (window.location.pathname.startsWith('/blog')) {
+//         const mainContent = document.getElementById('main-content');
+//         if (mainContent) {
+//             mainContent.innerHTML =
+//                 '<div class="blog-container"><div class="scroll-loader">Loading posts... ⏳</div></div>';
+//         }
+//     }
+// });
+// /Loader Delay
+</file>
+
+<file path="static/style.css">
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+	outline: none;
+	font-family: Arial, sans-serif;
+}
+
+body {
+	color: #000;
+}
+
+a {
+	text-decoration: none;
+	color: inherit;
+}
+
+ul {
+	list-style: none;
+}
+
+/* Utilities */
+.hidden,
+[hidden] {
+	display: none !important;
+}
+
+/* Header & Nav */
+.app-header {
+	background: #fff;
+	box-shadow: 0 4px 16px rgb(132 134 136 / 9%), 0 2px 10px rgb(138 140 143 / 2%);
+	padding: 20px 0;
+	text-align: center;
+	position: sticky;
+	top: 0;
+	z-index: 100;
+}
+
+.app-header h1 {
+	font-size: 24px;
+	margin-bottom: 20px;
+}
+
+nav {
+	display: flex;
+	justify-content: center;
+	gap: 20px;
+}
+
+nav a {
+	padding: 5px 10px;
+	font-size: 19px;
+	border-bottom: 2px solid transparent;
+	transition: 0.2s;
+}
+
+nav a.active,
+nav a:hover {
+	border-bottom: 2px solid #000;
+	font-weight: bold;
+}
+
+/* Main layout */
+#main-content {
+	display: flex;
+	justify-content: center;
+	padding: 35px 20px;
+}
+
+.card {
+	background: #fff;
+	width: 100%;
+	max-width: 550px;
+	text-align: center;
+}
+
+.card h2 {
+	font-size: 22px;
+	margin-bottom: 20px;
+}
+
+.post-counter {
+	color: #666;
+	font-size: 16px;
+	margin-bottom: 20px;
+}
+
+/* Form Elements */
+.input-group {
+	margin-bottom: 23px;
+	text-align: left;
+}
+
+.input-group label {
+	display: block;
+	font-weight: bold;
+	margin-bottom: 5px;
+	font-size: 17px;
+}
+
+.input-field {
+	width: 100%;
+	padding: 10px;
+	border: 1px solid #ccc;
+	border-radius: 6px;
+	font-size: 19px;
+}
+
+.textarea {
+	resize: none;
+	height: 200px;
+}
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: #fff;
+	background: #000;
+	padding: 10px 20px;
+	border: 1px solid #000;
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 16px;
+	width: 100%;
+	transition: all 0.2s;
+}
+
+.btn:hover {
+	opacity: 0.9;
+}
+
+.btn:active {
+	opacity: 0.8;
+}
+
+.btn-outline {
+	background: #fff;
+	color: #000;
+	border: 1px solid #ccc;
+}
+
+.btn-outline:hover {
+	border-color: #000;
+	background: #f9f9f9;
+}
+
+/* A set of buttons in the post-editing view: Back, Cancel, Publish */
+.edit-buttons-row {
+	display: flex;
+	gap: 10px;
+	margin-top: 5px;
+}
+
+.edit-buttons-row .btn {
+	flex: 1;
+}
+
+/* Blog Feed */
+.blog-container {
+	width: 100%;
+	max-width: 600px;
+	margin-top: 20px;
+}
+
+.post-list {
+	display: flex;
+	flex-direction: column;
+	gap: 25px;
+}
+
+.post-item {
+	background: #fff;
+	padding: 0;
+	border-radius: 8px;
+	border: 1px solid rgb(225 223 223 / 34%);
+	box-shadow: 0 4px 16px rgb(132 134 136 / 9%), 0 2px 2px rgb(138 140 143 / 10%);
+	text-align: left;
+	position: relative;
+	transition: all 0.2s ease;
+	overflow: hidden;
+}
+
+.post-item:hover {
+	transition: box-shadow 200ms ease;
+	box-shadow: 4px 6px 9px rgb(151 153 155 / 13%), 0 4px 6px rgb(155 157 162 / 7%);
+}
+
+.post-card-link {
+	display: block;
+	width: 100%;
+	height: 100%;
+	padding: 15px;
+	color: inherit;
+}
+
+.post-title {
+	text-align: center;
+	font-size: 20px;
+	line-height: 31px;
+	font-weight: 700;
+	margin: 22px 0 12px 0;
+	color: #000;
+}
+
+.post-text {
+	font-size: 19px;
+	color: #333;
+	margin-bottom: 15px;
+	word-wrap: break-word;
+	white-space: pre-wrap;
+	line-height: 1.4;
+}
+
+.post-date {
+	text-align: center;
+	font-size: 17px;
+	color: #929ba3;
+	display: block;
+}
+
+/* Action block: pencil (edit) + cross (delete) */
+.post-actions {
+	position: absolute;
+	top: 4px;
+	right: 12px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.post-detail-actions {
+	position: static;
+}
+
+.action-btn {
+	background: none;
+	border: none;
+	color: #aaa;
+	cursor: pointer;
+	padding: 2px 6px;
+	border-radius: 4px;
+	transition: color 0.2s, background-color 0.2s;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+/* Pencil */
+.edit-btn {
+	position: relative;
+	top: 2.1px;
+	font-size: 21px;
+}
+
+.edit-btn:hover {
+	color: #000;
+	background: #f0f0f0;
+}
+
+/* Delete icon (cross) */
+.delete-btn {
+	font-size: 27px;
+}
+
+.delete-btn:hover {
+	color: #d32f2f;
+	background: #ffebee;
+}
+
+/* Full post page (/posts/{id}) */
+.post-detail-card {
+	background: #fff;
+	padding: 15px;
+	border-radius: 12px;
+	border: 1px solid #e0e0e0;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+	width: 100%;
+	max-width: 830px;
+}
+
+.post-detail-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 20px;
+}
+
+.back-link {
+	font-size: 16px;
+	color: #666;
+	transition: color 0.2s;
+}
+
+.back-link:hover {
+	color: #000;
+}
+
+.post-detail-title {
+	font-size: 22px;
+	font-weight: bold;
+	color: #000;
+	text-align: center;
+	margin-bottom: 12px;
+	line-height: 31px;
+	word-wrap: break-word;
+}
+
+.post-detail-date {
+	display: block;
+	text-align: center;
+	font-size: 14px;
+	color: #8e8e93;
+	margin: 17px 0;
+}
+
+.post-detail-content {
+	font-size: 19px;
+	color: #1c1c1e;
+	line-height: 31px;
+	text-align: left;
+	white-space: pre-line;
+	word-wrap: break-word;
+}
+
+/* HTMX Loaders */
+.scroll-loader {
+	text-align: center;
+	color: #555;
+	padding: 0 0 15px;
+	font-size: 14px;
+}
+
+/* Toast Notifications */
+#toast-container {
+	position: fixed;
+	bottom: 20px;
+	right: 20px;
+	z-index: 1000;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.toast {
+	background: #333;
+	color: #fff;
+	padding: 15px 20px;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-width: 250px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+	animation: slideIn 0.3s ease-out;
+}
+
+.toast.success {
+	background: #2e7d32;
+}
+
+.toast.error {
+	background: #d32f2f;
+}
+
+.toast-close {
+	background: none;
+	border: none;
+	color: #fff;
+	font-size: 20px;
+	cursor: pointer;
+	margin-left: 15px;
+}
+
+@keyframes slideIn {
+	from {
+		transform: translateX(100%);
+		opacity: 0;
+	}
+
+	to {
+		transform: translateX(0);
+		opacity: 1;
+	}
+}
+</file>
+
+<file path="templates/base.html">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title }}</title>
+    <meta name="description" content="{{ page_description }}">
+    {% if noindex %}
+    <meta name="robots" content="noindex, nofollow">
+    {% else %}
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="{{ canonical_base_url }}{{ current_path }}">
+    {% endif %}
+
+    <!-- OpenGraph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{{ page_title }}">
+    <meta property="og:description" content="{{ page_description }}">
+
+    <link rel="stylesheet" href="/static/style.css?v=1.1.0">
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <script src="/static/htmx.min.js?v=4.0.0"></script>
+    <script src="/static/app.js?v=1.1.0" defer></script>
+</head>
+<body>
+    <header class="app-header">
+        <h1>Add Post (SAHAR)</h1>
+        <nav id="main-nav">
+            <a href="/"
+               data-hx-get="/"
+               data-hx-target="#main-content"
+               data-hx-swap="innerHTML"
+               data-hx-push-url="true"
+               class="nav-link {% if current_path == "/" %}active{% endif %}">Home</a>
+            <a href="/blog"
+               data-hx-get="/blog"
+               data-hx-target="#main-content"
+               data-hx-swap="innerHTML"
+               data-hx-push-url="true"
+               class="nav-link {% if current_path.starts_with("/blog") || current_path.starts_with("/posts/") %}active{% endif %}">Blog</a>
+        </nav>
+    </header>
+
+    <div id="toast-container"></div>
+
+    <main id="main-content" data-hx-history-elt>
+        {{ content_html|safe }}
+    </main>
+</body>
+</html>
+</file>
+
+<file path="templates/blog.html">
+<div class="blog-container"> 
+    <div class="post-list" id="feed-list">
+        {{ posts_html|safe }}
+    </div>
+</div>
+</file>
+
+<file path="templates/home.html">
+<div class="card" id="home-card">
+    <h2>Create a post</h2>
+    <p class="post-counter">Total posts: {{ total_posts }}</p>
+    
+    <form id="post-form" action="/api/posts" method="POST" data-hx-post="/api/posts" data-hx-target="#home-card" data-hx-swap="outerHTML" data-hx-sync="this:drop" data-hx-disable="find button[type='submit']" autocomplete="off">
+        <div class="input-group">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" class="input-field" autocomplete="off" maxlength="150" placeholder="Max 150 chars">
+        </div>
+
+        <div class="input-group">
+            <label for="content">* Text</label>
+            <textarea id="content" name="content" class="input-field textarea" autocomplete="off" required maxlength="3000" placeholder="Max 3000 chars"></textarea>
+        </div>
+
+        <!-- Hidden by default via the .hidden class and the hidden attribute -->
+        <button type="submit" id="submit-btn" class="btn btn-black hidden" hidden disabled>Add</button>
+    </form>
+</div>
+</file>
+
+<file path="templates/post_detail.html">
+{% match post %}
+{%- when Some with (post) -%}
+<article class="post-detail-card">
+    <div class="post-detail-header">
+        <a href="/blog"
+           data-hx-get="/blog"
+           data-hx-target="#main-content"
+           data-hx-swap="innerHTML"
+           data-hx-push-url="true"
+           class="back-link">&larr; Back to Blog</a>
+
+        <div class="post-actions post-detail-actions">
+            <a href="/posts/{{ post.id_hex }}/edit?from=post"
+               data-hx-get="/posts/{{ post.id_hex }}/edit?from=post"
+               data-hx-target="#main-content"
+               data-hx-swap="innerHTML"
+               data-hx-push-url="true"
+               class="action-btn edit-btn"
+               title="Edit post">&#9998;</a>
+
+            <button type="button"
+                    class="action-btn delete-btn"
+                    data-hx-delete="/api/posts/{{ post.id_hex }}?redirect=blog"
+                    data-hx-confirm="Are you sure you want to delete this post?"
+                    data-hx-target="#main-content"
+                    data-hx-swap="innerHTML"
+                    data-hx-sync="this:drop"
+                    data-hx-disable="this"
+                    title="Delete post">&times;</button>
+        </div>
+    </div>
+
+    {% if !post.title.is_empty() %}<h1 class="post-detail-title" data-hx-ignore dir="auto">{{ post.title }}</h1>{% endif %}
+    <span class="post-detail-date">{{ post.date_str }}</span>
+    <p class="post-detail-content" data-hx-ignore dir="auto">{{ post.content }}</p>
+</article>
+{%- when None -%}
+<div class="card">
+    <h2>404 — Post not found</h2>
+    <p class="post-counter">This post does not exist or has been deleted.</p>
+    <a href="/blog"
+       data-hx-get="/blog"
+       data-hx-target="#main-content"
+       data-hx-swap="innerHTML"
+       data-hx-push-url="true"
+       class="btn">Back to Blog</a>
+</div>
+{%- endmatch -%}
+</file>
+
+<file path="templates/post_edit.html">
+{% match post %}
+{% when Some with (post) %}
+<div class="card" id="edit-card">
+    <h2>Edit post</h2>
+    
+    <form id="edit-form"
+          action="/api/posts/{{ post.id_hex }}/edit"
+          method="POST"
+          data-hx-post="/api/posts/{{ post.id_hex }}/edit"
+          data-hx-target="#main-content"
+          data-hx-swap="innerHTML"
+          data-hx-sync="this:drop"
+          data-hx-disable="find button[type='submit']"
+          autocomplete="off">
+        <div class="input-group">
+            <label for="edit-title">Title</label>
+            <input type="text"
+                   id="edit-title"
+                   name="title"
+                   class="input-field"
+                   autocomplete="off"
+                   maxlength="150"
+                   placeholder="Max 150 chars"
+                   value="{{ post.title }}"
+                   data-original="{{ post.title }}">
+        </div>
+
+        <div class="input-group">
+            <label for="edit-content">* Text</label>
+            <textarea id="edit-content"
+                      name="content"
+                      class="input-field textarea"
+                      autocomplete="off"
+                      required
+                      maxlength="3000"
+                      placeholder="Max 3000 chars"
+                      data-original="{{ post.content }}">{{ post.content }}</textarea>
+        </div>
+
+        <div class="edit-buttons-row">
+            <a href="{{ back_url }}"
+               data-hx-get="{{ back_url }}"
+               data-hx-target="#main-content"
+               data-hx-swap="innerHTML"
+               data-hx-push-url="true"
+               class="btn btn-outline">Back</a>
+
+            <button type="button"
+                    id="cancel-edit-btn"
+                    class="btn btn-outline hidden"
+                    hidden>Cancel</button>
+
+            <button type="submit"
+                    id="publish-edit-btn"
+                    class="btn btn-black hidden"
+                    hidden
+                    disabled>Publish</button>
+        </div>
+    </form>
+</div>
+{% when None %}
+<div class="card">
+    <h2>404 — Post not found</h2>
+    <p class="post-counter">This post does not exist or has been deleted.</p>
+    <a href="/blog"
+       data-hx-get="/blog"
+       data-hx-target="#main-content"
+       data-hx-swap="innerHTML"
+       data-hx-push-url="true"
+       class="btn">Back to Feed</a>
+</div>
+{% endmatch %}
+</file>
+
+<file path="templates/post_items.html">
+{% for post in posts %}
+<article class="post-item">
+    <!-- Edit (pencil) and Delete (cross) actions -->
+    <div class="post-actions">
+        <a href="/posts/{{ post.id_hex }}/edit?from=blog" data-hx-get="/posts/{{ post.id_hex }}/edit?from=blog"
+            data-hx-target="#main-content" data-hx-swap="innerHTML" data-hx-push-url="true" class="action-btn edit-btn"
+            title="Edit post">&#9998;</a>
+
+        <button type="button" class="action-btn delete-btn" data-hx-delete="/api/posts/{{ post.id_hex }}"
+            data-hx-confirm="Are you sure you want to delete this post?" data-hx-swap="none" data-hx-sync="this:drop" data-hx-disable="this" title="Delete post">&times;
+        </button>
+    </div>
+
+    <!-- Full-card semantic link for SEO and SPA navigation -->
+    <a href="/posts/{{ post.id_hex }}" data-hx-get="/posts/{{ post.id_hex }}" data-hx-target="#main-content" data-hx-swap="innerHTML"
+        data-hx-push-url="true" class="post-card-link">
+        {% if !post.title.is_empty() %}
+        <h2 class="post-title" data-hx-ignore dir="auto">{{ post.title }}</h2>
+        {% endif %}
+        <p class="post-text" data-hx-ignore dir="auto">{{ post.content }}</p>
+        <span class="post-date">{{ post.date_str }}</span>
+    </a>
+</article>
+{% endfor %}
+
+{% if let Some(ts) = next_timestamp %}
+<!-- Hybrid Infinite Scroll trigger (for humans) + Crawlable SEO link (for search bots) -->
+<div class="scroll-loader" data-hx-get="/blog?before={{ ts }}" data-hx-trigger="revealed"
+    data-hx-swap="outerHTML">
+    <a href="/blog?before={{ ts }}">Loading more posts... ⏳</a>
+</div>
+{% endif %}
+</file>
+
+<file path="templates/toast.html">
+<div id="toast-container" data-hx-swap-oob="innerHTML">
+    <div class="toast {% if is_success %}success{% else %}error{% endif %}">
+        <span>{{ message }}</span>
+        <button type="button" class="toast-close">&times;</button>
+    </div>
+</div>
+</file>
+
+<file path=".gitignore">
+#AI
+repomix-output*
+
+# build
+target/
+# content
+uploads/
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Diagnostic reports (https://nodejs.org/api/report.html)
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Directory for instrumented libs generated by jscoverage/JSCover
+lib-cov
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Grunt intermediate storage (https://gruntjs.com/creating-plugins#storing-task-files)
+.grunt
+
+# Bower dependency directory (https://bower.io/)
+bower_components
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons (https://nodejs.org/api/addons.html)
+build/Release
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Snowpack dependency directory (https://snowpack.dev/)
+web_modules/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variable files
+.env*
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+out
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+# Comment in the public line in if your project uses Gatsby and not Next.js
+# https://nextjs.org/blog/next-9-1#public-directory-support
+# public
+
+# vuepress build output
+.vuepress/dist
+
+# vuepress v2.x temp and cache directory
+.temp
+.cache
+
+# Docusaurus cache and generated files
+.docusaurus
+
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# others
+.vs/
+</file>
+
+<file path=".repomixignore">
+.env*
+*.pem
+*.key
+README*
+README/
+repomix-output*
+htmx*
+secrets/
+target/
+node_modules/
+Cargo.lock
+</file>
+
+<file path="Cargo.toml">
+[package]
+name = "add_post_sahar"
+version = "1.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4.15.0"
+actix-files = "0.7.0"
+scylla = "1.8.0"
+askama = "0.16"
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
+uuid = { version = "1.26.0", features = ["v4", "serde"] }
+chrono = "0.4.34"
+</file>
+
+</files>
